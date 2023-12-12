@@ -1,5 +1,4 @@
-# conecropprediction
-Cone Crop Prediction Model
+# pycone
 
 ## Variables
 
