@@ -235,7 +235,11 @@ particular site and plot of trees. The column names are coded:
 
 * `Group.1`: Date range that was subtracted
 
-### Goals
+### Other notes
+
+All species except for Pinus have 2 year reproductive cycles.
+
+### Other goals
 
 - Jalene compiled a bunch of cone crop counts; we're using only a subset of
 data. Second sheet has location where temperature data was taken in proximity to
