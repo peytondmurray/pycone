@@ -202,8 +202,41 @@ Picture a species with 8 records. Presently, each record has a set of
 cone crop values and delta t values, and we run each record separately.
 Is there a way to combine all the 8 records into a single record and
 then run the program on that? Ultimately we want to know the best onset
-and duration for the species (not just for each record). [In other
+and duration for the species (not just for each record). In other
 words, the records are currently broken up by site but instead we want
 to break them up by just the species. i.e all records that have ABAM for
 example, would be grouped together instead of separated by their
-location site.]{.mark}
+location site.
+
+## 2023-12-11
+
+Three datasets can be found under `data/`:
+
+Version 1: $ΔT$
+Version 2: $exp(ΔT)$
+Version 3: $exp(ΔT/N_c)$
+
+$N_c$: median number of cones on a plot of trees
+
+### Structure of the existing data
+
+#### `exp(dT)__duration30_offset5.csv`
+
+$\Delta T$: Difference in temperature
+
+* `dYear`: Years containing dates that were subtracted
+* `#timestamp`: Date range that was subtracted
+* Other columns contain the $e^{\Delta T}$ value for the given date range at a
+particular site and plot of trees. The column names are coded:
+
+ - `10ABAM_OR`: Plot number 10, species name `ABAM`, site location `OR`
+
+#### `temp_means`
+
+* `Group.1`: Date range that was subtracted
+
+### Goals
+
+- Jalene compiled a bunch of cone crop counts; we're using only a subset of
+data. Second sheet has location where temperature data was taken in proximity to
+the Schulze and Franklin sites.
