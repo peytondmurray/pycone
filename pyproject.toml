@@ -1,12 +1,13 @@
 [build-system]
 requires = [
     "setuptools",
+    "setuptools_scm",
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pycone"
-version = "dynamic"
+dynamic = ["version"]
 authors = [
   { name="Peyton Murray", email="peynmurray@gmail.com" },
   { name="Justin Hawkins", email="urbanecoguard@gmail.com" },
@@ -20,12 +21,11 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-
-description =[
+dependencies = [
     "numpy",
     "scipy",
     "matplotlib",
-    "pandas",
+    "pandas"
 ]
 
 [project.urls]
@@ -58,3 +58,5 @@ select = [
 
 [project.optional-dependencies]
 dev = ["pre-commit", "ruff-lsp", "python-lsp-server"]
+
+[tool.setuptools_scm]
