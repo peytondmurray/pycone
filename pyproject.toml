@@ -1,0 +1,58 @@
+[build-system]
+requires = [
+    "setuptools",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycone"
+version = "dynamic"
+authors = [
+  { name="Peyton Murray", email="peynmurray@gmail.com" },
+]
+description = "Statistical Analysis for Cone Production"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+description =[
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pandas",
+]
+
+[project.urls]
+Homepage = "https://github.com/peytondmurray/pycone"
+
+[tool.setuptools]
+packages = ["pycone"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  # pycodestyle
+  "E",
+  # Pyflakes
+  "F",
+  # pyupgrade
+  "UP",
+  # flake8-bugbear
+  "B",
+  # flake8-simplify
+  "SIM",
+  # isort
+  "I",
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[project.optional-dependencies]
+dev = ["pre-commit", "ruff-lsp", "python-lsp-server"]
