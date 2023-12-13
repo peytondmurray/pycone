@@ -1,5 +1,7 @@
 # pycone
 
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/peytondmurray/pycone/main.svg?badge_token=2kgoDF-nRjei55dwzZpxPA)](https://results.pre-commit.ci/latest/github/peytondmurray/pycone/main?badge_token=2kgoDF-nRjei55dwzZpxPA)
+
 ## Variables
 
 Response variable: Cone crop
