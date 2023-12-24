@@ -8,8 +8,11 @@ version 3.4, August 25, 2023
 - offset did not work
 
 ## Fixes
-1) Offset: the offset parameter was not implemented in the code. As a result, the same dT values were calculated for different offsets. Indexing was corrected; now the date_range label and offset is correct
-2) Same dT: not sure why, but not the dT is different. I think it was probably because of the date_range group names? But I believe it resolved itself. Will see if Kelsey finds any issues!
+1) Offset: the offset parameter was not implemented in the code. As a result, the same dT values
+were calculated for different offsets. Indexing was corrected; now the date_range label and offset
+is correct
+2) Same dT: not sure why, but not the dT is different. I think it was probably because of the
+date_range group names? But I believe it resolved itself. Will see if Kelsey finds any issues!
 
 
 # FILES
@@ -60,4 +63,3 @@ TODO
 *** create output folder with NAMES
 * run code for all offsets in the timestep
 * create loop to cycle through different timesteps
-
