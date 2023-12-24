@@ -1,6 +1,7 @@
 import pathlib
 
 import pandas as pd
+import rich.progress as rp
 
 
 def load_data(
@@ -28,7 +29,6 @@ def load_weather(fname: pathlib.Path) -> pd.DataFrame:
     The file is expected to contain multiple sheets, with each sheet corresponding to a different
     year's data. Empty rows are dropped; dates are expected to be in ``mm/dd/yyyy`` format.
 
-
     Parameters
     ----------
     fname : pathlib.Path
@@ -39,14 +39,17 @@ def load_weather(fname: pathlib.Path) -> pd.DataFrame:
     pd.DataFrame
         Concatenated daily weather data.
     """
-    data = pd.read_excel(
-        fname,
-        sheet_name=None,
-        parse_dates=[4],
-        date_format="mm/dd/yyyy",
-        skiprows=10,
-    )
+    file = pd.ExcelFile(fname)
 
-    return pd.concat(data.values(), ignore_index=True).dropna(
+    sheets = {}
+    for sheet in rp.track(file.sheet_names, description="Loading weather data..."):
+        sheets[sheet] = file.parse(
+            sheet_name=sheet,
+            parse_dates=[4],
+            date_format="mm/dd/yyyy",
+            skiprows=10,
+        )
+
+    return pd.concat(sheets.values(), ignore_index=True).dropna(
         axis=0, how="all", ignore_index=True
     )
