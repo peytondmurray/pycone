@@ -25,7 +25,9 @@ dependencies = [
     "numpy",
     "scipy",
     "matplotlib",
-    "pandas"
+    "pandas",
+    "openpyxl",
+    "rich"
 ]
 
 [project.urls]
