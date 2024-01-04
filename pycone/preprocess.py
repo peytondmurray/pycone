@@ -164,7 +164,10 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
     # Extract the year as a separate column.
     df["date"] = pd.to_datetime(
         df["date"],
-        format="mm/dd/yyyy",
+        format="%m/%d/%Y",
     )
     df["year"] = df["date"].apply(lambda date: date.year)
+
+    # Compute the day number of the given year
+    df["day_of_year"] = df["date"].apply(lambda x: x.timetuple().tm_yday)
     return df
