@@ -28,7 +28,7 @@ def delta_t_2_pass(weather_data: pd.DataFrame) -> dict[Any, Any]:
         "[progress.percentage]{task.percentage:>3.0f}%",
         rp.TimeRemainingColumn(),
         rp.TimeElapsedColumn(),
-        refresh_per_second=1,
+        refresh_per_second=5,
     )
 
     with progress:
@@ -39,16 +39,16 @@ def delta_t_2_pass(weather_data: pd.DataFrame) -> dict[Any, Any]:
             results = []
             worker_status = manager.dict()
             with multiprocessing.Pool() as pool:
-                for year, df in weather_data.groupby(by="year"):
+                for (year, name), df in weather_data.groupby(by=["year", "name"]):
                     task_id = progress.add_task(
-                        f"Year {year}:",
+                        f"Year {year}, site {name}:",
                         visible=False,
                     )
                     results.append(
                         pool.apply_async(
                             calculate_mean_t,
-                            (df, year),
-                            {"task_id": str(task_id), "worker_status": worker_status},
+                            (df, year, name),
+                            {"task_id": task_id, "worker_status": worker_status},
                         )
                     )
 
@@ -77,14 +77,15 @@ def delta_t_2_pass(weather_data: pd.DataFrame) -> dict[Any, Any]:
                     total=len(results),
                 )
 
-    return dict(result.get() for result in results)
+    return pd.concat(result.get() for result in results)
 
 
 def calculate_mean_t(
     df: pd.DataFrame,
     year: int,
-    task_id: str,
-    worker_status: dict[str, Any],
+    name: str,
+    task_id: int,
+    worker_status: dict[int, Any],
     doy_col: str = "day_of_year",
     t_col: str = "tmean (degrees f)",
 ) -> tuple[int, dict[str, pd.DataFrame]]:
@@ -107,32 +108,30 @@ def calculate_mean_t(
     tuple[int, dict[str, pd.DataFrame]]
         Mapping between {site name: mean temperature data}
     """
+    min_doy = df[doy_col].min()
+    max_doy = df[doy_col].max()
 
-    grouped = df.groupby("name")
+    mean_t = defaultdict(list)
 
-    mean_t = {}
+    start_range = range(min_doy, max_doy)
+    for i, start in enumerate(start_range):
+        for duration in range(0, max_doy - start):
+            end = start + duration
+            day_of_year = df[doy_col]
 
-    for site_number, (site, site_df) in enumerate(grouped):
-        min_doy = site_df[doy_col].min()
-        max_doy = site_df[doy_col].max()
+            mean_t["start"].append(start)
+            mean_t["duration"].append(duration)
+            mean_t["mean_t"].append(
+                df.loc[(start <= day_of_year) & (day_of_year < end), t_col].mean()
+            )
+        worker_status[task_id] = {"items_completed": i, "total": len(start_range)}
 
-        mean_t_at_site = defaultdict(list)
-        for start in range(min_doy, max_doy):
-            for duration in range(0, max_doy - start):
-                end = start + duration
-                day_of_year = site_df[doy_col]
+    mean_t_df = pd.DataFrame(mean_t)
+    mean_t_df["name"] = name
+    mean_t_df["year"] = year
+    worker_status[task_id] = {
+        "items_completed": len(start_range),
+        "total": len(start_range),
+    }
 
-                mean_t_at_site["start"].append(start)
-                mean_t_at_site["duration"].append(duration)
-                mean_t_at_site["mean_t"].append(
-                    site_df.loc[
-                        (start <= day_of_year) & (day_of_year < end), t_col
-                    ].mean()
-                )
-
-        mean_t[site] = pd.DataFrame(mean_t_at_site)
-
-        worker_status[task_id] = {"items_completed": site_number, "total": len(grouped)}
-
-    worker_status[task_id] = {"items_completed": len(grouped), "total": len(grouped)}
-    return year, mean_t
+    return mean_t_df
