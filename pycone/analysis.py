@@ -2,25 +2,29 @@ import multiprocessing
 from collections import defaultdict
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import rich.progress as rp
 
 
-def delta_t_2_pass(weather_data: pd.DataFrame) -> dict[Any, Any]:
-    """Calculate delta-T in two steps:
-
-    1. Iterate over each year, computing mean T for every combination of start1, start2, and
-    duration
-    2. Iterate over each year again, subtracting the mean T values
+def calculate_mean_t(weather_data: pd.DataFrame) -> pd.DataFrame:
+    """Calculate mean temperature for all sites for each year.
 
     Parameters
     ----------
     weather_data : pd.DataFrame
+        Weather data for different sites on different years
 
     Returns
     -------
     pd.DataFrame
+        Mean temperature for all sites and years. Columns:
 
+            name
+            year
+            start
+            duration
+            mean_t
     """
     progress = rp.Progress(
         "[progress.description]{task.description}",
@@ -28,13 +32,15 @@ def delta_t_2_pass(weather_data: pd.DataFrame) -> dict[Any, Any]:
         "[progress.percentage]{task.percentage:>3.0f}%",
         rp.TimeRemainingColumn(),
         rp.TimeElapsedColumn(),
-        refresh_per_second=5,
+        refresh_per_second=30,
     )
 
     with progress:
         overall_progress_task = progress.add_task(
             "[green]Calculating Mean Temperature:"
         )
+
+        # Start a manager so that we can use a dictionary to share worker status info
         with multiprocessing.Manager() as manager:
             results = []
             worker_status = manager.dict()
@@ -44,9 +50,11 @@ def delta_t_2_pass(weather_data: pd.DataFrame) -> dict[Any, Any]:
                         f"Year {year}, site {name}:",
                         visible=False,
                     )
+
+                    # Initiate mean t calculation
                     results.append(
                         pool.apply_async(
-                            calculate_mean_t,
+                            calculate_mean_t_site_year,
                             (df, year, name),
                             {"task_id": task_id, "worker_status": worker_status},
                         )
@@ -80,7 +88,7 @@ def delta_t_2_pass(weather_data: pd.DataFrame) -> dict[Any, Any]:
     return pd.concat(result.get() for result in results)
 
 
-def calculate_mean_t(
+def calculate_mean_t_site_year(
     df: pd.DataFrame,
     year: int,
     name: str,
@@ -89,7 +97,7 @@ def calculate_mean_t(
     doy_col: str = "day_of_year",
     t_col: str = "tmean (degrees f)",
 ) -> tuple[int, dict[str, pd.DataFrame]]:
-    """Compute the mean temperature for the given year data.
+    """Compute the mean temperature for the given year data at the given site.
 
     The input data is grouped by site name, and average temperatures for all possible start days and
     durations is calculated.
@@ -108,25 +116,25 @@ def calculate_mean_t(
     tuple[int, dict[str, pd.DataFrame]]
         Mapping between {site name: mean temperature data}
     """
-    min_doy = df[doy_col].min()
-    max_doy = df[doy_col].max()
+    result = defaultdict(list)
 
-    mean_t = defaultdict(list)
+    # Pull out the numpy arrays before looping - it's way faster (20x) than using
+    # pandas .loc to filter rows
+    doy = df[doy_col].values
+    temperature = df[t_col].values
+    min_doy = doy.min()
+    max_doy = doy.max()
 
     start_range = range(min_doy, max_doy)
     for i, start in enumerate(start_range):
-        for duration in range(0, max_doy - start):
-            end = start + duration
-            day_of_year = df[doy_col]
-
-            mean_t["start"].append(start)
-            mean_t["duration"].append(duration)
-            mean_t["mean_t"].append(
-                df.loc[(start <= day_of_year) & (day_of_year < end), t_col].mean()
-            )
+        for duration in range(1, max_doy - start):
+            temp = temperature[(start <= doy) & (doy < start + duration)]
+            result["mean_t"].append(np.nan if temp.size == 0 else temp.mean())
+            result["start"].append(start)
+            result["duration"].append(duration)
         worker_status[task_id] = {"items_completed": i, "total": len(start_range)}
 
-    mean_t_df = pd.DataFrame(mean_t)
+    mean_t_df = pd.DataFrame(result)
     mean_t_df["name"] = name
     mean_t_df["year"] = year
     worker_status[task_id] = {

@@ -19,6 +19,15 @@ pip install .
 This will install the necessary dependencies for the project, and allow you to
 run the code; the dependencies are specified in `pyproject.toml`.
 
+## Running the code
+
+```python
+import pycone
+
+cones, weather = pycone.preprocess.load_data()
+mean_t = pycone.analysis.calculate_mean_t(weather)
+```
+
 ## Development
 
 To pull in the development dependencies:
