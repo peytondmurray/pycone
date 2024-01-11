@@ -126,6 +126,8 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
 
     Column names are stripped of leading and trailing whitespaces, then lowercased.
 
+    The 'name' column is renamed to 'site' for clarity.
+
     Parameters
     ----------
     fname : pathlib.Path
@@ -158,6 +160,7 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
         pd.concat(sheets.values(), ignore_index=True)
         .dropna(axis=0, how="all", ignore_index=True)
         .rename(columns=lambda col: col.lstrip().rstrip().lower())
+        .rename(columns={"name": "site"})
     )
 
     # Convert the date column from object dtype to a pandas datetime object;
