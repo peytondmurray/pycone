@@ -60,8 +60,7 @@ def extract_year_from_column_name(col: str) -> int | None:
                 stacklevel=2,
             )
         return year
-    else:
-        return None
+    return None
 
 
 def load_cone_crop(fname: pathlib.Path | None = None) -> pd.DataFrame:
@@ -97,7 +96,7 @@ def load_cone_crop(fname: pathlib.Path | None = None) -> pd.DataFrame:
     # Create a mapping from old column names to new ones. Keep a list of the year columns separately
     # from the other columns, so that we can pivot the table later on.
     year_columns, other_columns = [], []
-    new_columns = {}
+    new_columns = {"code": "site"}
     for column in df.columns:
         col = column.lstrip().rstrip().lower()
         year = extract_year_from_column_name(col)
