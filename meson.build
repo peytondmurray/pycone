@@ -7,19 +7,10 @@ project(
 py_mod = import('python')
 py = py_mod.find_installation()
 
-incdir_numpy = run_command(py,
-  [
-    '-c',
-    'import numpy; print(numpy.get_include())'
-  ],
-  check: true
-).stdout().strip()
-
 pybind11_dep = dependency('pybind11', version: '>=2.10.4')
 
 includes = include_directories(
   [
-    incdir_numpy,
     'pycone/src',
   ]
 )
@@ -33,10 +24,20 @@ py.install_sources(
     'pycone/__init__.py',
     'pycone/analysis.py',
     'pycone/preprocess.py',
-    'pycone/util.py'
+    'pycone/util.py',
   ],
   subdir: 'pycone',
   pure: false
+)
+
+install_data(
+  'pycone/data/cone_crop.xlsx',
+  'pycone/data/daily_weather_1981-2014.xlsx',
+  'pycone/data/jalene_compilation_2014_lter.xlsx',
+  install_dir: py.get_install_dir(
+    subdir: 'pycone/data',
+    pure: false,
+  )
 )
 
 py.extension_module(
