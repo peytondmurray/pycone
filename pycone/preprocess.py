@@ -5,6 +5,8 @@ import warnings
 import pandas as pd
 import rich.progress as rp
 
+from . import util
+
 
 def load_data(
     cones_fname: pathlib.Path | str | None = None,
@@ -83,32 +85,46 @@ def load_cone_crop(fname: pathlib.Path | None = None) -> pd.DataFrame:
     if fname is None:
         fname = pathlib.Path(__file__).parent / "data" / "cone_crop.xlsx"
 
-    df = pd.read_excel(
-        fname,
-        na_filter=False,
+    # Load the data; drop the original site column, it's not the same site
+    # column that the weather data uses, so just remove it to avoid confusion
+    df = (
+        pd.read_excel(
+            fname,
+        )
+        .rename(columns=lambda col: col.lstrip().rstrip().lower())
+        .drop(columns=["site"])
     )
-
     # Create a mapping from old column names to new ones. Keep a list of the year columns separately
     # from the other columns, so that we can pivot the table later on.
     year_columns, other_columns = [], []
-    new_columns = {"code": "site"}
-    for column in df.columns:
-        col = column.lstrip().rstrip().lower()
+    new_columns = {}
+    for col in df.columns:
         year = extract_year_from_column_name(col)
         if year is None:
-            new_columns[column] = col
             other_columns.append(col)
         else:
-            new_columns[column] = str(year)
+            new_columns[col] = str(year)
             year_columns.append(str(year))
 
     # Pivot the dataframe so that each value in the year columns becomes a new row in the output
-    # dataframe.
-    return df.rename(columns=new_columns).melt(
-        id_vars=other_columns,
-        value_vars=year_columns,
-        var_name="year",
-        value_name="cones",
+    # dataframe. Drop any (site, year) rows with no cone measurement.
+    df = (
+        df.rename(columns=new_columns)
+        .melt(
+            id_vars=other_columns,
+            value_vars=year_columns,
+            var_name="year",
+            value_name="cones",
+        )
+        .dropna(axis=0, subset=["cones"])
+    )
+
+    # Rename the code column to site to match the weather data. Replace the sites with the
+    # integer site code, then set the dtype of the site column to short to consume less
+    # memory, and to match weather data.
+    df = df.rename(columns={"code": "site"}).replace({"site": util.SITE_CODES})
+    return df.astype(
+        dtype={col: dtype for col, dtype in util.DTYPES.items() if col in df.columns}
     )
 
 

@@ -11,6 +11,7 @@ DTYPES = {
     "duration": np.short,
     "site": np.short,
     "year": np.short,
+    "cones": int,
 }
 
 SITE_CODES = {
