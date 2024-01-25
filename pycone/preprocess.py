@@ -72,7 +72,7 @@ def load_cone_crop(fname: pathlib.Path | None = None) -> pd.DataFrame:
     ----------
     fname : pathlib.Path | None
         Path to the cone crop data spreadsheet. If unspecified, uses
-        ``data/raw_data/cone_crop.xlsx``.
+        ``data/cone_crop.xlsx``.
 
     Returns
     -------
@@ -81,12 +81,7 @@ def load_cone_crop(fname: pathlib.Path | None = None) -> pd.DataFrame:
         year.
     """
     if fname is None:
-        fname = (
-            pathlib.Path(__file__).parent.parent
-            / "data"
-            / "raw_data"
-            / "cone_crop.xlsx"
-        )
+        fname = pathlib.Path(__file__).parent / "data" / "cone_crop.xlsx"
 
     df = pd.read_excel(
         fname,
@@ -131,7 +126,7 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
     ----------
     fname : pathlib.Path
         Path to the spreadsheet to be loaded. If unspecified, uses
-        ``data/raw_data/daily_weather_1981-2014.xlsx``.
+        ``data/daily_weather_1981-2014.xlsx``.
 
     Returns
     -------
@@ -143,7 +138,6 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
         fname = (
             pathlib.Path(__file__).parent.parent
             / "data"
-            / "raw_data"
             / "daily_weather_1981-2014.xlsx"
         )
     file = pd.ExcelFile(fname)
