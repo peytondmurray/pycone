@@ -1,4 +1,7 @@
+import multiprocessing as mp
 import pathlib
+from multiprocessing.pool import AsyncResult
+from types import TracebackType
 
 import numpy as np
 import pandas as pd
@@ -104,3 +107,86 @@ def read_data(path: str | pathlib.Path) -> pd.DataFrame:
     """
     with rp.open(path, "rb") as f:
         return pd.read_csv(f, dtype=DTYPES)
+
+
+class ParallelProcessProgressPool:
+    """Context manager which provides a process pool with a managed dict and a progress bar."""
+
+    def __init__(self, overall_description: str, processes: int | None = None):
+        """Process pool which manages status updates from workers."""
+        self.progress = rp.Progress(
+            "[progress.description]{task.description}",
+            rp.BarColumn(),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            rp.TimeRemainingColumn(),
+            rp.TimeElapsedColumn(),
+            refresh_per_second=30,
+        )
+        self.manager = mp.Manager()
+        self.pool = mp.Pool(processes=processes)
+        self.overall_description = overall_description
+
+    def __enter__(self):
+        self.overall_progress_task = self.progress.add_task(self.overall_description)
+        self.worker_status = self.manager.dict()
+        self.progress.start()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        traceback: TracebackType,
+    ):
+        self.progress.stop()
+
+    def add_task(self, description: str, **kwargs) -> int:
+        """Add a task to the progress bar.
+
+        Parameters
+        ----------
+        description : str
+            Description to display for the progress bar
+        **kwargs
+            Additional kwargs passed to rich.progress.Progress.add_task
+
+        Returns
+        -------
+        int
+            Task ID for the new task bar
+        """
+        return self.progress.add_task(description, **kwargs)
+
+    def monitor_progress(self, results: list[AsyncResult]):
+        """Monitor worker progress until all jobs finish and display the progress.
+
+        Parameters
+        ----------
+        results : Iterable[mp.pool.AsyncResult]
+            Iterable of AsyncResults which need to be waited to complete.
+            The overall progress bar will be updated as results become ready.
+        """
+        # Monitor worker progress by checking worker_status until all jobs finish
+        n_complete = 0
+        while n_complete < len(results):
+            self.progress.update(
+                self.overall_progress_task,
+                completed=n_complete,
+                total=len(results),
+            )
+            for task_id, status in self.worker_status.items():
+                completed = status["items_completed"]
+                total = status["total"]
+                self.progress.update(
+                    task_id,
+                    completed=completed,
+                    total=total,
+                    visible=completed < total,
+                )
+            n_complete = sum(result.ready() for result in results)
+
+        self.progress.update(
+            self.overall_progress_task,
+            completed=len(results),
+            total=len(results),
+        )
