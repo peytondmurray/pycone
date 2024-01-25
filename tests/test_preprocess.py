@@ -8,8 +8,9 @@ import pytest
 from pycone import preprocess
 
 
-@pytest.fixture
+@pytest.fixture()
 def raw_data_path() -> pathlib.Path:
+    """Fixture which provides the path to the raw data directory."""
     return pathlib.Path(__file__).parent.parent / "data" / "raw_data"
 
 
@@ -38,6 +39,7 @@ def test_load_weather(mock_load_excel_file):
 
 @mock.patch("pandas.read_excel")
 def test_load_cone_crop(mock_read_excel):
+    """Test that the cone crop can be loaded and preprocessed."""
     mock_read_excel.return_value = pd.DataFrame(
         {
             "Code ": ["1ABAM_OR", "2ABCO_OR", "3ABCO_OR", "4ABLA_OR"],
@@ -89,15 +91,15 @@ def test_load_cone_crop(mock_read_excel):
 
 
 @pytest.mark.parametrize(
-    "name,expected",
-    (
-        ["y2012", 2012],
-        ["y10211", None],
-        ["foo", None],
-        [" y1921", None],
-        ["y1921 ", None],
-        ["yy1921", None],
-    ),
+    ("name", "expected"),
+    [
+        ("y2012", 2012),
+        ("y10211", None),
+        ("foo", None),
+        (" y1921", None),
+        ("y1921 ", None),
+        ("yy1921", None),
+    ],
 )
 def test_parse_year_column_name(name, expected):
     """Test that the year column name parser works as expected for various input."""
