@@ -418,7 +418,7 @@ def compute_correlation(
     # join the weather and ΔT data into a single dataframe
 
     gb = (
-        cones["site", "year", "cones"]
+        cones[["site", "year", "cones"]]
         .merge(
             delta_t,
             how="inner",
