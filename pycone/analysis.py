@@ -7,11 +7,15 @@ import numpy as np
 import pandas as pd
 import rich.progress as rp
 
+from . import util
 from ._pycone_main import fast_delta_t_site_duration
 
 
 def calculate_delta_t(
-    mean_t: pd.DataFrame, duration: int | Iterable[int] | None = None, year_gap: int = 1
+    mean_t: pd.DataFrame,
+    duration: int | Iterable[int] | None = None,
+    delta_t_year_gap: int = 1,
+    crop_year_gap: int = 1,
 ) -> pd.DataFrame:
     """Calculate ΔT from the mean temperature data.
 
@@ -19,10 +23,14 @@ def calculate_delta_t(
     ----------
     mean_t : pd.DataFrame
         Mean temperature data
-    year_gap : int
-        Time gap between T_year1 and T_year2; specified in years
     duration : int | Iterable
         Duration(s) to calculate data for; if None, all possible durations are calculated.
+    delta_t_year_gap : int
+        Time gap between T_year1 and T_year2; specified in years
+    crop_year_gap: int
+        Time gap between year2 and the year of the expected cone crop. (year2+crop_year_gap) is the
+        year that is used to join the temperature differences with cone crop data before
+        correlations are calculated.
 
     Returns
     -------
@@ -32,6 +40,7 @@ def calculate_delta_t(
             site: Site code
             year1: Year in which the first interval lies
             year2: Year in which the second interval lies
+            crop_year: Year in which the cone crop will manifest; for conifers
             start1: Starting day of year for the first interval
             start2: Starting day of year for the second inverval
             duration: Duration of the interval [days]
@@ -54,7 +63,7 @@ def calculate_delta_t(
             results = []
             worker_status = status_manager.dict()
 
-            with mp.Pool(processes=4) as pool:
+            with mp.Pool() as pool:
                 for site, df in mean_t.groupby(by="site"):
                     task_id = progress.add_task(
                         f"Site {site}:",
@@ -69,7 +78,7 @@ def calculate_delta_t(
                                 "duration": duration,
                                 "task_id": task_id,
                                 "worker_status": worker_status,
-                                "year_gap": year_gap,
+                                "year_gap": delta_t_year_gap,
                             },
                         )
                     )
@@ -98,7 +107,11 @@ def calculate_delta_t(
                     completed=len(results),
                     total=len(results),
                 )
-    return pd.concat(result.get() for result in results)
+    data = pd.concat(result.get() for result in results)
+
+    # Add on a column for the cone crop year
+    data["crop_year"] = data["year2"] + crop_year_gap
+    return data
 
 
 def calculate_delta_t_site_fast(
@@ -162,10 +175,12 @@ def calculate_delta_t_site_fast(
 
     is_subprocess = worker_status is not None and task_id is not None
     if is_subprocess:
-        worker_status[task_id] = {"items_completed": 0, "total": gb.ngroups}  # type: ignore
+        worker_status[task_id] = {"items_completed": 0, "total": len(durations)}  # type: ignore
 
     results = []
-    for i, (duration, duration_df) in enumerate(zip(durations, dfs, strict=True)):
+    for i, (duration, duration_df) in enumerate(
+        zip(durations, dfs, strict=True), start=1
+    ):
         result = calculate_delta_t_site_duration_fast(
             duration_df,
             years,
@@ -175,7 +190,7 @@ def calculate_delta_t_site_fast(
         results.append(result)
 
         if is_subprocess:
-            worker_status[task_id] = {"items_completed": i, "total": gb.ngroups}  # type: ignore
+            worker_status[task_id] = {"items_completed": i, "total": len(durations)}  # type: ignore
 
     result_df = pd.concat(results, axis=0)
     result_df["site"] = np.full(len(result_df), site, dtype=np.short)
@@ -415,26 +430,93 @@ def compute_correlation(
         Correlation coefficient for a given site, duration, start1, and start2 for all years of
         data.
     """
-    # join the weather and ΔT data into a single dataframe
-
-    gb = (
-        cones[["site", "year", "cones"]]
-        .merge(
-            delta_t,
-            how="inner",
-            left_on=["site", "year"],
-            right_on=["site", "year2"],
+    with util.ParallelProcessProgressPool("[green]Calculating correlation:") as pppp:
+        gb = (
+            cones[["site", "year", "cones"]]
+            .merge(
+                delta_t,
+                how="inner",
+                left_on=["site", "year"],
+                right_on=["site", "crop_year"],
+            )
+            .groupby(by=["site", "duration"])
         )
-        .groupby(by=["site", "duration", "start1", "start2"])
-    )
 
+        results = []
+        for (site, duration), df in gb:
+            task_id = pppp.add_task(f"Site {site}, duration {duration}:", visible=False)
+            results.append(
+                pppp.pool.apply_async(
+                    compute_correlation_site_duration,
+                    (df, site, duration),
+                    {"task_id": task_id, "worker_status": pppp.worker_status},
+                )
+            )
+
+        pppp.monitor_progress(results)
+
+    return pd.concat(result.get() for result in results)
+
+
+def compute_correlation_site_duration(
+    data: pd.DataFrame,
+    site: int,
+    duration: int,
+    task_id: int,
+    worker_status: dict[int, Any] | None = None,
+    dt_col: str = "delta_t",
+    cones_col: str = "cones",
+) -> pd.DataFrame:
+    """Compute the correlation for a given site and duration.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Merged delta-T and cone crop data. Must have the following columns:
+
+            delta_t
+            cones
+            start1
+            start2
+
+    site : int
+        Integer corresponding to the site from which the data was taken
+    duration : int
+        Duration of the intervals used to calculate the mean temperature (and therefore delta-T)
+    task_id : int
+        Task ID returned by ``rich.progress.Progress.add_task``, used for reporting progress to the
+        main process
+    worker_status : dict[int, Any]
+        Dictionary where worker status information can be written. This is a multiprocessing-safe
+        object shared across all workers.
+    dt_col : str
+        Name of the column containing delta-T data
+    cones_col : str
+        Name of the column containing cone count data
+
+    Returns
+    -------
+    pd.DataFrame
+        Cones/delta-T Pearson's correlation coefficient for all years for the given site and
+        duration, for each value of start1 and start2 in the input data.
+    """
     results = defaultdict(list)
 
-    for (site, duration, start1, start2), df in gb:
-        results["site"].append(site)
-        results["duration"].append(duration)
+    gb = data.groupby(["start1", "start2"])
+    if worker_status is not None:
+        worker_status[task_id] = {"items_completed": 0, "total": gb.ngroups}
+
+    for i, ((start1, start2), df) in enumerate(gb, start=1):
         results["start1"].append(start1)
         results["start2"].append(start2)
-        results["correlation"].append(df.corr(method="pearson"))
+        results["correlation"].append(
+            df[[dt_col, cones_col]].corr(method="pearson")[dt_col][cones_col]
+        )
 
-    return pd.DataFrame(results)
+        if worker_status is not None:
+            worker_status[task_id] = {"items_completed": i, "total": gb.ngroups}
+
+    result = pd.DataFrame(results)
+    result["site"] = site
+    result["duration"] = duration
+    return result
