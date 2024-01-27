@@ -29,7 +29,8 @@ dependencies = [
     "matplotlib",
     "pandas",
     "openpyxl",
-    "rich"
+    "rich",
+    "pyside6",
 ]
 
 [project.urls]

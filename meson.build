@@ -24,6 +24,7 @@ py.install_sources(
     'pycone/__init__.py',
     'pycone/analysis.py',
     'pycone/preprocess.py',
+    'pycone/output.py',
     'pycone/util.py',
   ],
   subdir: 'pycone',
