@@ -67,6 +67,8 @@ SITE_CODES = {
     "9TSME_OR": 47,
 }
 
+SITE_CODES_INVERSE = {val: key for key, val in SITE_CODES.items()}
+
 
 def write_data(df: pd.DataFrame, path: str | pathlib.Path):
     """Write data to a csv file.
@@ -190,3 +192,76 @@ class ParallelProcessProgressPool:
             completed=len(results),
             total=len(results),
         )
+
+
+def site_to_code(site: str) -> int:
+    """Convert a string site name to an integer code for performance.
+
+    Parameters
+    ----------
+    site : str
+        Name of the site to convert
+
+    Returns
+    -------
+    int
+        Unique integer site code
+    """
+    return SITE_CODES[site]
+
+
+def code_to_site(site: int) -> str:
+    """Map the site code to the corresponding site name.
+
+    Parameters
+    ----------
+    site : int
+        Unique site integer to convert back into a site name
+
+    Returns
+    -------
+    str
+        Original site name corresponding to the site code
+    """
+    return SITE_CODES_INVERSE[site]
+
+
+def make_pixel_map(
+    x_meas: np.ndarray,
+    y_meas: np.ndarray,
+    z_meas: np.ndarray,
+    extent: tuple[int, int, int, int],
+) -> np.ndarray:
+    """Reorder the z-data into a 2D array, with data populated based on the x and y variables.
+
+    Parameters
+    ----------
+    x_meas : np.ndarray
+        X data
+    y_meas : np.ndarray
+        Y data
+    z_meas : np.ndarray
+        Z data to plot as a colormap
+    extent : tuple[int, int, int, int]
+        [xmin, xmax, ymin, ymax] to use for the dataset; will be used by imshow to display this
+        pixel map
+
+    Returns
+    -------
+    np.ndarray
+        The intput data as a 2D array ready to be plotted by imshow. Missing values are set to
+        np.nan
+    """
+    x = np.arange(extent[0], extent[1] + 1)
+    y = np.arange(extent[2], extent[3] + 1)
+    xx, yy = np.meshgrid(x, y)
+    zz = np.full_like(xx, np.nan, dtype=float)
+
+    x_sorter = np.argsort(x)
+    xi = x_sorter[np.searchsorted(x, x_meas, sorter=x_sorter)]
+
+    y_sorter = np.argsort(y)
+    yi = y_sorter[np.searchsorted(y, y_meas, sorter=y_sorter)]
+
+    zz[yi, xi] = z_meas
+    return zz

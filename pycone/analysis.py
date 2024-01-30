@@ -116,7 +116,7 @@ def calculate_delta_t(
 
 def calculate_delta_t_site_fast(
     df: pd.DataFrame,
-    site: str,
+    site: int,
     duration: int | Iterable | None = None,
     task_id: int | None = None,
     worker_status: dict[int, Any] | None = None,
@@ -134,7 +134,7 @@ def calculate_delta_t_site_fast(
     ----------
     df : pd.DataFrame
         Mean temperature data for the given site
-    site : str
+    site : int
         Site where the temperature data was recorded
     duration : int | Iterable
         Duration(s) to calculate data for; if None, all possible durations are calculated.
