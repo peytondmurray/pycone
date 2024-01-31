@@ -89,6 +89,7 @@ ignore = [
     "ANN201", # Missing return type annotation for public function (makes no sense for NoneType return types...)
     "ANN101", # Missing type annotation for `self`
     "ANN204", # Missing return type annotation for special method
+    "ANN002", # Missing type annotation for `*args`
     "ANN003", # Missing type annotation for `**kwargs`
     "D105", # Missing docstring in magic method
     "D203", # 1 blank line before after class docstring

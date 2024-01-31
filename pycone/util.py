@@ -2,6 +2,7 @@ import multiprocessing as mp
 import pathlib
 from multiprocessing.pool import AsyncResult
 from types import TracebackType
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -111,7 +112,7 @@ def read_data(path: str | pathlib.Path) -> pd.DataFrame:
         return pd.read_csv(f, dtype=DTYPES)
 
 
-class ParallelProcessProgressPool:
+class ParallelExecutor:
     """Context manager which provides a process pool with a managed dict and a progress bar."""
 
     def __init__(self, overall_description: str, processes: int | None = None):
@@ -127,6 +128,7 @@ class ParallelProcessProgressPool:
         self.manager = mp.Manager()
         self.pool = mp.Pool(processes=processes)
         self.overall_description = overall_description
+        self.results: list[AsyncResult] = []
 
     def __enter__(self):
         self.overall_progress_task = self.progress.add_task(self.overall_description)
@@ -159,22 +161,23 @@ class ParallelProcessProgressPool:
         """
         return self.progress.add_task(description, **kwargs)
 
-    def monitor_progress(self, results: list[AsyncResult]):
+    def wait_for_results(self) -> list[Any]:
         """Monitor worker progress until all jobs finish and display the progress.
 
-        Parameters
-        ----------
-        results : Iterable[mp.pool.AsyncResult]
-            Iterable of AsyncResults which need to be waited to complete.
-            The overall progress bar will be updated as results become ready.
+        Returns
+        -------
+        list[Any]
+            List of return values from the functions executed by the pool.
+            The order of this list matches the order in which functions and
+            arguments were called with ParallelExecutor.apply_async.
         """
         # Monitor worker progress by checking worker_status until all jobs finish
         n_complete = 0
-        while n_complete < len(results):
+        while n_complete < len(self.results):
             self.progress.update(
                 self.overall_progress_task,
                 completed=n_complete,
-                total=len(results),
+                total=len(self.results),
             )
             for task_id, status in self.worker_status.items():
                 completed = status["items_completed"]
@@ -185,13 +188,31 @@ class ParallelProcessProgressPool:
                     total=total,
                     visible=completed < total,
                 )
-            n_complete = sum(result.ready() for result in results)
+            n_complete = sum(result.ready() for result in self.results)
 
         self.progress.update(
             self.overall_progress_task,
-            completed=len(results),
-            total=len(results),
+            completed=len(self.results),
+            total=len(self.results),
         )
+
+        return [result.get() for result in self.results]
+
+    def apply_async(self, *args, **kwargs):
+        """Apply a function asynchronously.
+
+        The result of the function call is captured on `self.results` as an AsyncResult.
+        Wait for all processes to finish with `ParallelExecutor.wait_for_results`.
+
+        Parameters
+        ----------
+        *args
+            Arguments to be passed to `multiprocessing.Pool.apply_async`
+        **kwargs
+            Keyword arguments to be passed to `multiprocessing.Pool.apply_async`
+
+        """
+        self.results.append(self.pool.apply_async(*args, **kwargs))
 
 
 def site_to_code(site: str) -> int:
