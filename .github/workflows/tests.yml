@@ -4,8 +4,10 @@ on:
   pull_request:
 
 jobs:
-  run-tests:
+  tests:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -14,6 +16,22 @@ jobs:
       - name: Install dependencies
         run: |
           pip install .[dev]
-      - name: Run tests
+      - id: run-tests
+        name: Run tests
         run: |
-          pytest
+          # For some reason running in editable mode like you would normally do with pytest-cov
+          # doesn't work on the github CI runner. Instead, we forcibly tell pytest-cov to check
+          # coverage on the installed pycone code, then strip the path of the files in the
+          # coverage report using sed to avoid horizontal clutter.
+          pytest --cov=$(python -c 'import site; print(site.getsitepackages()[0])')/pycone/ .
+          {
+            echo 'COVERAGE<<EOF'
+            coverage report -m --format=markdown | sed -e s#/.*/site-packages/##g
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Comment with coverage report
+        run: gh pr comment $ISSUE --edit-last --body "$COMMENT" || gh pr comment $ISSUE --body "$COMMENT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.pull_request.number }}
+          COMMENT: ${{ steps.run-tests.outputs.COVERAGE }}

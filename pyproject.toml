@@ -105,8 +105,11 @@ ignore = [
 ]
 
 [project.optional-dependencies]
-dev = ["pre-commit>=3.6.0", "ruff-lsp", "python-lsp-server", "pytest"]
+dev = ["pre-commit>=3.6.0", "ruff-lsp", "python-lsp-server", "pytest", "pytest-cov"]
 build = ["setuptools_scm", "meson-python", "pybind11", "build"]
 notebook = ["jupyterlab", "ipywidgets"]
 
 [tool.setuptools_scm]
+
+[tool.coverage.run]
+omit = ["tests/*"]  # Don't bother measuring test coverage for tests themselves
