@@ -1,11 +1,9 @@
-import multiprocessing as mp
 from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
 import pandas as pd
-import rich.progress as rp
 
 from . import util
 from ._pycone_main import fast_delta_t_site_duration
@@ -46,68 +44,24 @@ def calculate_delta_t(
             duration: Duration of the interval [days]
             delta_t: Difference in the average temperatures for the two intervals [°F]
     """
-    progress = rp.Progress(
-        "[progress.description]{task.description}",
-        rp.BarColumn(),
-        "[progress.percentage]{task.percentage:>3.0f}%",
-        rp.TimeRemainingColumn(),
-        rp.TimeElapsedColumn(),
-        refresh_per_second=30,
-    )
+    with util.ParallelExecutor("[green]Calculating ΔT:") as pe:
+        for site, df in mean_t.groupby(by="site"):
+            task_id = pe.add_task(
+                f"Site {site}:",
+                visible=False,
+            )
+            pe.apply_async(
+                calculate_delta_t_site_fast,
+                (df, site),
+                {
+                    "duration": duration,
+                    "task_id": task_id,
+                    "worker_status": pe.worker_status,
+                    "year_gap": delta_t_year_gap,
+                },
+            )
 
-    with progress:
-        overall_progress_task = progress.add_task("[green]Calculating ΔT:")
-
-        # Start a manager so that we can use a dictionary to share worker status info
-        with mp.Manager() as status_manager:
-            results = []
-            worker_status = status_manager.dict()
-
-            with mp.Pool() as pool:
-                for site, df in mean_t.groupby(by="site"):
-                    task_id = progress.add_task(
-                        f"Site {site}:",
-                        visible=False,
-                    )
-
-                    results.append(
-                        pool.apply_async(
-                            calculate_delta_t_site_fast,
-                            (df, site),
-                            {
-                                "duration": duration,
-                                "task_id": task_id,
-                                "worker_status": worker_status,
-                                "year_gap": delta_t_year_gap,
-                            },
-                        )
-                    )
-
-                # Monitor worker progress by checking worker_status until all jobs finish
-                n_complete = 0
-                while n_complete < len(results):
-                    progress.update(
-                        overall_progress_task,
-                        completed=n_complete,
-                        total=len(results),
-                    )
-                    for task_id, status in worker_status.items():
-                        completed = status["items_completed"]
-                        total = status["total"]
-                        progress.update(
-                            task_id,
-                            completed=completed,
-                            total=total,
-                            visible=completed < total,
-                        )
-                    n_complete = sum(result.ready() for result in results)
-
-                progress.update(
-                    overall_progress_task,
-                    completed=len(results),
-                    total=len(results),
-                )
-    data = pd.concat(result.get() for result in results)
+        data = pd.concat(pe.wait_for_results())
 
     # Add on a column for the cone crop year
     data["crop_year"] = data["year2"] + crop_year_gap
@@ -261,66 +215,18 @@ def calculate_mean_t(weather_data: pd.DataFrame) -> pd.DataFrame:
             duration
             mean_t
     """
-    progress = rp.Progress(
-        "[progress.description]{task.description}",
-        rp.BarColumn(),
-        "[progress.percentage]{task.percentage:>3.0f}%",
-        rp.TimeRemainingColumn(),
-        rp.TimeElapsedColumn(),
-        refresh_per_second=30,
-    )
-
-    with progress:
-        overall_progress_task = progress.add_task(
-            "[green]Calculating Mean Temperature:"
-        )
-
-        # Start a manager so that we can use a dictionary to share worker status info
-        with mp.Manager() as manager:
-            results = []
-            worker_status = manager.dict()
-            with mp.Pool() as pool:
-                for (year, site), df in weather_data.groupby(by=["year", "site"]):
-                    task_id = progress.add_task(
-                        f"Year {year}, site {site}:",
-                        visible=False,
-                    )
-
-                    # Initiate mean t calculation
-                    results.append(
-                        pool.apply_async(
-                            calculate_mean_t_site_year,
-                            (df, year, site),
-                            {"task_id": task_id, "worker_status": worker_status},
-                        )
-                    )
-
-                # Monitor worker progress by checking worker_status until all jobs finish
-                n_complete = 0
-                while n_complete < len(results):
-                    progress.update(
-                        overall_progress_task,
-                        completed=n_complete,
-                        total=len(results),
-                    )
-                    for task_id, status in worker_status.items():
-                        completed = status["items_completed"]
-                        total = status["total"]
-                        progress.update(
-                            task_id,
-                            completed=completed,
-                            total=total,
-                            visible=completed < total,
-                        )
-                    n_complete = sum(result.ready() for result in results)
-
-                progress.update(
-                    overall_progress_task,
-                    completed=len(results),
-                    total=len(results),
-                )
-
-    return pd.concat(result.get() for result in results)
+    with util.ParallelExecutor("[green]Calculating Mean Temperature:") as pe:
+        for (year, site), df in weather_data.groupby(by=["year", "site"]):
+            task_id = pe.add_task(
+                f"Year {year}, site {site}:",
+                visible=False,
+            )
+            pe.apply_async(
+                calculate_mean_t_site_year,
+                (df, year, site),
+                {"task_id": task_id, "worker_status": pe.worker_status},
+            )
+        return pd.concat(pe.wait_for_results())
 
 
 def calculate_mean_t_site_year(
@@ -430,7 +336,7 @@ def compute_correlation(
         Correlation coefficient for a given site, duration, start1, and start2 for all years of
         data.
     """
-    with util.ParallelProcessProgressPool("[green]Calculating correlation:") as pppp:
+    with util.ParallelExecutor("[green]Calculating correlation:") as pe:
         gb = (
             cones[["site", "year", "cones"]]
             .merge(
@@ -442,20 +348,15 @@ def compute_correlation(
             .groupby(by=["site", "duration"])
         )
 
-        results = []
         for (site, duration), df in gb:
-            task_id = pppp.add_task(f"Site {site}, duration {duration}:", visible=False)
-            results.append(
-                pppp.pool.apply_async(
-                    compute_correlation_site_duration,
-                    (df, site, duration),
-                    {"task_id": task_id, "worker_status": pppp.worker_status},
-                )
+            task_id = pe.add_task(f"Site {site}, duration {duration}:", visible=False)
+            pe.apply_async(
+                compute_correlation_site_duration,
+                (df, site, duration),
+                {"task_id": task_id, "worker_status": pe.worker_status},
             )
 
-        pppp.monitor_progress(results)
-
-    return pd.concat(result.get() for result in results)
+        return pd.concat(pe.wait_for_results())
 
 
 def compute_correlation_site_duration(
