@@ -7,10 +7,7 @@ project(
 py_mod = import('python')
 py = py_mod.find_installation()
 
-pybind11 = find_program('pybind11-config')
-pybind11_dep = declare_dependency(
-  include_directories: [run_command(['pybind11-config', '--includes'], check: true).stdout().split('-I')[-1].strip()]
-)
+pybind11_dep = dependency('pybind11', version: '>=2.10.4')
 
 includes = include_directories(
   [
