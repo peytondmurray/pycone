@@ -20,7 +20,14 @@ def calculate_delta_t(
     Parameters
     ----------
     mean_t : pd.DataFrame
-        Mean temperature data
+        Mean temperature data. Must contain columns
+
+            site
+            year
+            start
+            duration
+            mean_t
+
     duration : int | Iterable
         Duration(s) to calculate data for; if None, all possible durations are calculated.
     delta_t_year_gap : int
@@ -202,7 +209,12 @@ def calculate_mean_t(weather_data: pd.DataFrame) -> pd.DataFrame:
     Parameters
     ----------
     weather_data : pd.DataFrame
-        Weather data for different sites on different years
+        Weather data for different sites on different years. Must have columns
+
+            site
+            year
+            day_of_year
+            tmean (degrees f)
 
     Returns
     -------
@@ -233,8 +245,8 @@ def calculate_mean_t_site_year(
     df: pd.DataFrame,
     year: int,
     site: str,
-    task_id: int,
-    worker_status: dict[int, Any],
+    task_id: int | None = None,
+    worker_status: dict[int, Any] | None = None,
     doy_col: str = "day_of_year",
     t_col: str = "tmean (degrees f)",
 ) -> pd.DataFrame:
@@ -242,6 +254,9 @@ def calculate_mean_t_site_year(
 
     The input data is grouped by site, and average temperatures for all possible start days and
     durations is calculated.
+
+    The mean of the data is calculated using the trapezoid rule (rather than a simple arithmetic
+    mean), so gaps in the data are correctly accounted for.
 
     Parameters
     ----------
@@ -251,12 +266,12 @@ def calculate_mean_t_site_year(
         Year for which the temperature data was recorded
     site : str
         Site where the temperature data was recorded
-    task_id : int
+    task_id : int | None
         Task ID returned by ``rich.progress.Progress.add_task``, used for reporting progress to the
         main process
-    worker_status : dict[int, Any]
+    worker_status : dict[int, Any] | None
         Dictionary where worker status information can be written. This is a multiprocessing-safe
-        object shared across all workers.
+        object shared across all workers. If None, no progress is reported.
     doy_col : str
         Column name of the day of year for a given measurement
     t_col : str
@@ -268,34 +283,50 @@ def calculate_mean_t_site_year(
         DataFrame containing mean temperature for all possible starting dates and durations for the
         given site and year
     """
-    result = defaultdict(list)
+    # Preallocate to cover the edge cases where data is recorded for 1 or 2 days in the year
+    result: dict[str, list[float | int]] = {
+        "mean_t": [],
+        "start": [],
+        "duration": [],
+    }
 
     # Pull out the numpy arrays before looping - it's way faster (20x) than using
     # pandas .loc to filter rows
     doy = df[doy_col].to_numpy()
     temperature = df[t_col].to_numpy()
-    min_doy = doy.min()
-    max_doy = doy.max()
 
-    start_range = range(min_doy, max_doy)
+    is_subprocess = worker_status is not None and task_id is not None
+    if is_subprocess:
+        worker_status[task_id] = {"items_completed": 0, "total": len(doy) - 1}  # type: ignore
 
-    if worker_status is not None:
-        worker_status[task_id] = {"items_completed": 0, "total": len(start_range)}
+    for i, start in enumerate(doy):
+        for end in doy[i + 1 :]:
+            doy_interval = doy[(start <= doy) & (doy <= end)]
+            temperature_interval = temperature[(start <= doy) & (doy <= end)]
+            duration = end - start
 
-    for i, start in enumerate(start_range, start=1):
-        for duration in range(1, max_doy - start):
-            temp = temperature[(start <= doy) & (doy < start + duration)]
-            result["mean_t"].append(np.nan if temp.size == 0 else temp.mean())
+            if temperature_interval.size == 0:
+                mean_temp = np.nan
+            else:
+                if duration == 1:
+                    # Trapezoid rule really only makes sense for 2 or more points; just
+                    # use the temperature of the single day in this case.
+                    mean_temp = temperature_interval[0]
+                else:
+                    mean_temp = (
+                        np.trapz(y=temperature_interval, x=doy_interval) / duration
+                    )
+
+            result["mean_t"].append(mean_temp)
             result["start"].append(start)
             result["duration"].append(duration)
 
-        if worker_status is not None:
-            worker_status[task_id] = {"items_completed": i, "total": len(start_range)}
+        if is_subprocess:
+            worker_status[task_id] = {"items_completed": i, "total": len(doy) - 1}  # type: ignore
 
     mean_t_df = pd.DataFrame(result)
     mean_t_df["site"] = site
     mean_t_df["year"] = year
-
     return mean_t_df
 
 
@@ -363,7 +394,7 @@ def compute_correlation_site_duration(
     data: pd.DataFrame,
     site: int,
     duration: int,
-    task_id: int,
+    task_id: int | None = None,
     worker_status: dict[int, Any] | None = None,
     dt_col: str = "delta_t",
     cones_col: str = "cones",
@@ -384,7 +415,7 @@ def compute_correlation_site_duration(
         Integer corresponding to the site from which the data was taken
     duration : int
         Duration of the intervals used to calculate the mean temperature (and therefore delta-T)
-    task_id : int
+    task_id : int | None
         Task ID returned by ``rich.progress.Progress.add_task``, used for reporting progress to the
         main process
     worker_status : dict[int, Any]
@@ -402,10 +433,11 @@ def compute_correlation_site_duration(
         duration, for each value of start1 and start2 in the input data.
     """
     results = defaultdict(list)
-
     gb = data.groupby(["start1", "start2"])
-    if worker_status is not None:
-        worker_status[task_id] = {"items_completed": 0, "total": gb.ngroups}
+
+    is_subprocess = worker_status is not None and task_id is not None
+    if is_subprocess:
+        worker_status[task_id] = {"items_completed": 0, "total": gb.ngroups}  # type: ignore
 
     for i, ((start1, start2), df) in enumerate(gb, start=1):
         results["start1"].append(start1)
@@ -414,8 +446,8 @@ def compute_correlation_site_duration(
             df[[dt_col, cones_col]].corr(method="pearson")[dt_col][cones_col]
         )
 
-        if worker_status is not None:
-            worker_status[task_id] = {"items_completed": i, "total": gb.ngroups}
+        if is_subprocess:
+            worker_status[task_id] = {"items_completed": i, "total": gb.ngroups}  # type: ignore
 
     result = pd.DataFrame(results)
     result["site"] = site
