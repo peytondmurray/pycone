@@ -119,13 +119,11 @@ def load_cone_crop(fname: pathlib.Path | None = None) -> pd.DataFrame:
         .dropna(axis=0, subset=["cones"])
     )
 
-    # Rename the code column to site to match the weather data. Replace the sites with the
-    # integer site code, then set the dtype of the site column to short to consume less
-    # memory, and to match weather data.
-    df = df.rename(columns={"code": "site"}).replace({"site": util.SITE_CODES})
-    return df.astype(
-        dtype={col: dtype for col, dtype in util.DTYPES.items() if col in df.columns}
-    )
+    # Create a new integer site code column from the site names. Then drop the site codes
+    # and cast the data types to smaller types to save memory.
+    df["site"] = df["code"].map(util.SITE_CODES)
+    df = df.drop(columns=["code"])
+    return util.downcast_dtypes(df)
 
 
 def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
@@ -151,11 +149,7 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
         measurement at a site on a given date.
     """
     if fname is None:
-        fname = (
-            pathlib.Path(__file__).parent.parent
-            / "data"
-            / "daily_weather_1981-2014.xlsx"
-        )
+        fname = pathlib.Path(__file__).parent / "data" / "daily_weather_1981-2014.xlsx"
     file = pd.ExcelFile(fname)
 
     sheets = {}
@@ -169,8 +163,9 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
         pd.concat(sheets.values(), ignore_index=True)
         .dropna(axis=0, how="all", ignore_index=True)
         .rename(columns=lambda col: col.lstrip().rstrip().lower())
-        .rename(columns={"name": "site"})
     )
+
+    df["site"] = df["name"].map(util.SITE_CODES)
 
     # Convert the date column from object dtype to a pandas datetime object;
     # Extract the year as a separate column.
@@ -182,4 +177,8 @@ def load_weather(fname: pathlib.Path | None = None) -> pd.DataFrame:
 
     # Compute the day number of the given year
     df["day_of_year"] = df["date"].apply(lambda x: x.timetuple().tm_yday)
-    return df
+
+    # Drop as many columns as possible and then cast to smaller data types to save
+    # memory and disk space
+    df = df.drop(columns=["name", "longitude", "latitude", "elevation (ft)", "date"])
+    return util.downcast_dtypes(df)
