@@ -171,32 +171,35 @@ class ParallelExecutor:
             The order of this list matches the order in which functions and
             arguments were called with ParallelExecutor.apply_async.
         """
-        # Monitor worker progress by checking worker_status until all jobs finish
-        n_complete = 0
-        while n_complete < len(self.results):
+        try:
+            # Monitor worker progress by checking worker_status until all jobs finish
+            n_complete = 0
+            while n_complete < len(self.results):
+                self.progress.update(
+                    self.overall_progress_task,
+                    completed=n_complete,
+                    total=len(self.results),
+                )
+                for task_id, status in self.worker_status.items():
+                    completed = status["items_completed"]
+                    total = status["total"]
+                    self.progress.update(
+                        task_id,
+                        completed=completed,
+                        total=total,
+                        visible=completed < total,
+                    )
+                n_complete = sum(result.ready() for result in self.results)
+
             self.progress.update(
                 self.overall_progress_task,
-                completed=n_complete,
+                completed=len(self.results),
                 total=len(self.results),
             )
-            for task_id, status in self.worker_status.items():
-                completed = status["items_completed"]
-                total = status["total"]
-                self.progress.update(
-                    task_id,
-                    completed=completed,
-                    total=total,
-                    visible=completed < total,
-                )
-            n_complete = sum(result.ready() for result in self.results)
-
-        self.progress.update(
-            self.overall_progress_task,
-            completed=len(self.results),
-            total=len(self.results),
-        )
-
-        return [result.get() for result in self.results]
+            return [result.get() for result in self.results]
+        finally:
+            self.pool.close()
+            self.pool.join()
 
     def apply_async(self, *args, **kwargs):
         """Apply a function asynchronously.
