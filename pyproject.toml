@@ -94,6 +94,8 @@ ignore = [
     "D105", # Missing docstring in magic method
     "D203", # 1 blank line before after class docstring
     "D204", # 1 blank line required after class docstring
+    "D413", # 1 black line after parameters
+    "SIM108", # Simplify if/else to one line; not always clearer
 ]
 
 [tool.ruff.per-file-ignores]

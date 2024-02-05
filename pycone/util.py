@@ -16,6 +16,9 @@ DTYPES = {
     "site": np.short,
     "year": np.short,
     "cones": int,
+    "tmean (degrees f)": np.single,
+    "day_of_year": np.short,
+    "delta_t": np.single,
 }
 
 SITE_CODES = {
@@ -191,6 +194,18 @@ class ParallelExecutor:
                     )
                 n_complete = sum(result.ready() for result in self.results)
 
+            # Clean up any progress bars that aren't hidden already
+            for task_id, status in self.worker_status.items():
+                completed = status["items_completed"]
+                total = status["total"]
+                self.progress.update(
+                    task_id,
+                    completed=completed,
+                    total=total,
+                    visible=False,
+                )
+
+            # Set the main progress bar to 100%
             self.progress.update(
                 self.overall_progress_task,
                 completed=len(self.results),
@@ -289,3 +304,19 @@ def make_pixel_map(
 
     zz[yi, xi] = z_meas
     return zz
+
+
+def downcast_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """Cast the columns of df which match items in DTYPES to those types.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data table for which dtypes should be casted
+
+    Returns
+    -------
+    pd.DataFrame
+        Casted dataframe
+    """
+    return df.astype({key: val for key, val in DTYPES.items() if key in df.columns})

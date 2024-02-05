@@ -26,6 +26,13 @@ import pycone
 
 cones, weather = pycone.preprocess.load_data()
 mean_t = pycone.analysis.calculate_mean_t(weather)
+...
+```
+
+The full analysis can be run by simply running
+
+```bash
+python -m pycone
 ```
 
 ## Development
@@ -33,12 +40,23 @@ mean_t = pycone.analysis.calculate_mean_t(weather)
 To pull in the development dependencies:
 
 ```bash
-pip install -e .[dev]
+pip install -e .[dev,build] --no-build-isolation
 ```
 
 Here, `[dev]` adds the optional dependencies that are specified in
 `pyproject.toml`, and `-e` installs the package in ["editable"
 mode](https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-e).
+
+We also make use of `--no-build-isolation` because we depend on the `pybind11`
+C++ header file for the compiled part of this project. By default, pip will
+download build-time dependencies and build the project in an isolated
+environment (usually somewhere in `/tmp/`) which is not always guaranteed to
+exist in the future. When the code is run and the need for a rebuild is
+detected, meson-python will attempt to rebuild the compiled part of the project
+using the path originally used: somewhere in `/tmp/`. If this doesn't exist,
+you'll run into a confusing build error. So to get around this, we run with
+`--no-build-isolation`, which just uses the `pybind11` that gets installed to
+your python environment when you do `pip install .[build]`.
 
 ## Testing
 
@@ -50,6 +68,14 @@ pytest
 
 to run all the tests. Tests are also run as part of continuous integration (CI),
 which runs every time someone makes a pull request.
+
+To measure code coverage, do
+
+```bash
+pytest --cov=.
+```
+
+to generate a coverage report.
 
 ## Package Structure
 

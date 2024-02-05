@@ -13,8 +13,7 @@ def calculate_delta_t(
     mean_t: pd.DataFrame,
     duration: int | Iterable[int] | None = None,
     delta_t_year_gap: int = 1,
-    crop_year_gap: int = 1,
-) -> pd.DataFrame:
+) -> pd.DataFrame | None:
     """Calculate ΔT from the mean temperature data.
 
     Parameters
@@ -32,10 +31,6 @@ def calculate_delta_t(
         Duration(s) to calculate data for; if None, all possible durations are calculated.
     delta_t_year_gap : int
         Time gap between T_year1 and T_year2; specified in years
-    crop_year_gap: int
-        Time gap between year2 and the year of the expected cone crop. (year2+crop_year_gap) is the
-        year that is used to join the temperature differences with cone crop data before
-        correlations are calculated.
 
     Returns
     -------
@@ -45,13 +40,12 @@ def calculate_delta_t(
             site: Site code
             year1: Year in which the first interval lies
             year2: Year in which the second interval lies
-            crop_year: Year in which the cone crop will manifest; for conifers
             start1: Starting day of year for the first interval
             start2: Starting day of year for the second inverval
             duration: Duration of the interval [days]
             delta_t: Difference in the average temperatures for the two intervals [°F]
     """
-    with util.ParallelExecutor("[green]Calculating ΔT:") as pe:
+    with util.ParallelExecutor("[green]Calculating ΔT:", processes=8) as pe:
         for site, df in mean_t.groupby(by="site"):
             task_id = pe.add_task(
                 f"Site {site}:",
@@ -68,11 +62,7 @@ def calculate_delta_t(
                 },
             )
 
-        data = pd.concat(pe.wait_for_results())
-
-    # Add on a column for the cone crop year
-    data["crop_year"] = data["year2"] + crop_year_gap
-    return data
+        return pd.concat(pe.wait_for_results())
 
 
 def calculate_delta_t_site_fast(
@@ -82,7 +72,7 @@ def calculate_delta_t_site_fast(
     task_id: int | None = None,
     worker_status: dict[int, Any] | None = None,
     year_gap: int = 1,
-) -> pd.DataFrame:
+) -> pd.DataFrame | None:
     """Calculate the difference in temperature for the given site.
 
     Data is grouped by duration here because the compiled delta-t calculation is so fast
@@ -178,7 +168,13 @@ def calculate_delta_t_site_duration_fast(
     Returns
     -------
     pd.DataFrame
-        Table of ΔT data for the given site.
+        Table of ΔT data for the given site:
+
+            start1
+            start2
+            delta_t
+            year1
+            year2
     """
     results = defaultdict(list)
 
@@ -330,9 +326,148 @@ def calculate_mean_t_site_year(
     return mean_t_df
 
 
+def compute_correlation_from_mean(
+    mean_t: pd.DataFrame,
+    cones: pd.DataFrame,
+    delta_t_year_gap: int = 1,
+    crop_year_gap: int = 1,
+) -> pd.DataFrame:
+    """Compute the correlation between ΔT and the number of cones from mean temperature.
+
+    This function skips the intermediate step of storing ΔT, which can take up huge amounts of
+    memory.
+
+    Parameters
+    ----------
+    mean_t : pd.DataFrame
+        Mean temperature data
+    cones : pd.DataFrame
+        Cone crop data
+    delta_t_year_gap : int
+        Gap between years for which ΔT is calculated
+    crop_year_gap : int
+        Gap between the second year used for calculating ΔT and the year in which the cone crop is
+        correlated
+
+    Returns
+    -------
+    pd.DataFrame
+        Correlation DataFrame for all sites; columns:
+
+            start1
+            start2
+            correlation
+            site
+            duration
+    """
+    with util.ParallelExecutor("[green]Calculating correlation:") as pe:
+        for site, df in mean_t.groupby(by="site"):
+            task_id = pe.add_task(
+                f"Site {site}:",
+                visible=False,
+            )
+            pe.apply_async(
+                calculate_correlation_from_mean_site,
+                (df, site, cones.loc[cones["site"] == site]),
+                {
+                    "task_id": task_id,
+                    "worker_status": pe.worker_status,
+                    "delta_t_year_gap": delta_t_year_gap,
+                    "crop_year_gap": crop_year_gap,
+                },
+            )
+
+        return pd.concat(pe.wait_for_results())
+
+
+def calculate_correlation_from_mean_site(
+    df: pd.DataFrame,
+    site: int,
+    cones: pd.DataFrame,
+    durations: int | Iterable | None = None,
+    task_id: int | None = None,
+    worker_status: dict[int, Any] | None = None,
+    delta_t_year_gap: int = 1,
+    crop_year_gap: int = 1,
+) -> pd.DataFrame:
+    """Calculate the cone crop correlation from mean temperature data per-site.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Mean temperature data for the given site
+    site : int
+        Site code
+    cones : pd.DataFrame
+        Cone data for the given site
+    durations : int | Iterable | None
+        Duration(s) to calculate data for; if None, all possible durations are calculated
+    task_id : int | None
+        Task ID returned by ``rich.progress.Progress.add_task``, used for reporting progress to the
+        main process
+    worker_status : dict[int, Any] | None
+        Dictionary where worker status information can be written. This is a multiprocessing-safe
+        object shared across all workers
+    delta_t_year_gap : int
+        Gap [years] between year1 and year2. Certain tree species have 3 year reproductive cycles,
+        but most have 2 year cycles (1 year gap)
+    crop_year_gap : int
+        Gap between the second year used for calculating ΔT and the year in which the cone crop is
+        correlated
+
+    Returns
+    -------
+    pd.DataFrame
+        Correlation DataFrame for the given site with columns
+
+            start1
+            start2
+            correlation
+            site
+            duration
+    """
+    years = np.sort(df["year"].unique())[:-delta_t_year_gap]
+
+    if isinstance(durations, int):
+        durations, dfs = (durations,), (df.loc[df["duration"] == durations],)
+    elif isinstance(durations, Iterable):
+        gb = df.loc[df["duration"].isin(durations)].groupby(by="duration")
+        durations, dfs = tuple(zip(*tuple(gb), strict=True))
+    else:
+        gb = df.groupby(by="duration")
+        durations, dfs = tuple(zip(*tuple(gb), strict=True))
+
+    is_subprocess = worker_status is not None and task_id is not None
+    if is_subprocess:
+        worker_status[task_id] = {"items_completed": 0, "total": len(durations)}  # type: ignore
+
+    results = []
+    for i, (duration, duration_df) in enumerate(
+        zip(durations, dfs, strict=True), start=1
+    ):
+        delta_t = calculate_delta_t_site_duration_fast(
+            duration_df, years, year_gap=delta_t_year_gap
+        )
+        delta_t["site"] = site
+        delta_t["crop_year"] = delta_t["year2"] + crop_year_gap
+
+        dt_cone_df = cones[["site", "year", "cones"]].merge(
+            delta_t,
+            how="inner",
+            left_on=["site", "year"],
+            right_on=["site", "crop_year"],
+        )
+        results.append(compute_correlation_site_duration(dt_cone_df, site, duration))
+        if is_subprocess:
+            worker_status[task_id] = {"items_completed": i, "total": len(durations)}  # type: ignore
+
+    return pd.concat(results)
+
+
 def compute_correlation(
     delta_t: pd.DataFrame,
     cones: pd.DataFrame,
+    crop_year_gap: int = 1,
 ) -> pd.DataFrame:
     r"""Compute the Pearson's correlation coefficient between the temperature and cone data.
 
@@ -360,6 +495,10 @@ def compute_correlation(
         [start1, start1+duration] and [start2, start2+duration] on year1 and year2.
     cones : pd.DataFrame
         Number of cones as a function of year at a given site.
+    crop_year_gap: int
+        Time gap between year2 and the year of the expected cone crop. (year2+crop_year_gap) is the
+        year that is used to join the temperature differences with cone crop data before
+        correlations are calculated.
 
     Returns
     -------
@@ -367,6 +506,7 @@ def compute_correlation(
         Correlation coefficient for a given site, duration, start1, and start2 for all years of
         data.
     """
+    delta_t["crop_year"] = delta_t["year2"] + crop_year_gap
     with util.ParallelExecutor("[green]Calculating correlation:") as pe:
         gb = (
             cones[["site", "year", "cones"]]
@@ -430,7 +570,13 @@ def compute_correlation_site_duration(
     -------
     pd.DataFrame
         Cones/delta-T Pearson's correlation coefficient for all years for the given site and
-        duration, for each value of start1 and start2 in the input data.
+        duration, for each value of start1 and start2 in the input data. Has columns:
+
+            start1
+            start2
+            correlation
+            site
+            duration
     """
     results = defaultdict(list)
     gb = data.groupby(["start1", "start2"])

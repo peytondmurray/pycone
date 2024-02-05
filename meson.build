@@ -22,7 +22,9 @@ srcs = [
 py.install_sources(
   [
     'pycone/__init__.py',
+    'pycone/__main__.py',
     'pycone/analysis.py',
+    'pycone/run.py',
     'pycone/preprocess.py',
     'pycone/output.py',
     'pycone/util.py',
