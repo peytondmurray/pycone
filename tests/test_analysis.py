@@ -58,22 +58,23 @@ def test_compute_correlation_site_duration_random():
 def test_compute_correlation():
     """Test that the multiprocess correlation is computed correctly; output is compared to numpy."""
     site = np.repeat([1, 2], 10)
-    year = np.tile(np.arange(1989, 1999), 2)
+    year1 = np.tile(np.arange(1989, 1999), 2)
     rng = np.random.default_rng(123)
     cones = pd.DataFrame(
         {
             "site": site,
-            "year": year,
+            "year": year1 + 2,
             "cones": rng.integers(0, 10, size=20),
         }
     )
     delta_t = pd.DataFrame(
         {
             "site": site,
-            "crop_year": year,
             "duration": np.full(20, 20),
             "start1": np.full_like(site, 100),
             "start2": np.full_like(site, 120),
+            "year1": year1,
+            "year2": year1 + 1,
             "delta_t": rng.random(size=20),
         }
     )
@@ -82,12 +83,18 @@ def test_compute_correlation():
         cones,
     )
     assert not corr.empty
+
+    delta_t["crop_year"] = year1 + 2
+    merged = cones[["site", "year", "cones"]].merge(
+        delta_t, how="inner", left_on=["site", "year"], right_on=["site", "crop_year"]
+    )
+
     for site_value, df in corr.groupby("site"):
         assert np.isclose(
             df.iloc[0]["correlation"],
             np.corrcoef(
-                cones.loc[cones["site"] == site_value]["cones"].values,
-                delta_t.loc[delta_t["site"] == site_value]["delta_t"].values,
+                merged.loc[merged["site"] == site_value]["cones"].values,
+                merged.loc[merged["site"] == site_value]["delta_t"].values,
             )[0, 1],
         )
 
@@ -151,7 +158,6 @@ def test_calculate_delta_t():
     )
 
     result = pycone.analysis.calculate_delta_t(data)
-    assert "crop_year" in result.columns
 
     # For each site, start, duration, and pair of years there's a delta_t that is computed.
     # Here we have for each site: 5 days (year 1) * 5 days (year 2) * 1 duration = 25 values.

@@ -13,7 +13,6 @@ def calculate_delta_t(
     mean_t: pd.DataFrame,
     duration: int | Iterable[int] | None = None,
     delta_t_year_gap: int = 1,
-    output_path: str | None = None,
 ) -> pd.DataFrame | None:
     """Calculate ΔT from the mean temperature data.
 
@@ -32,12 +31,10 @@ def calculate_delta_t(
         Duration(s) to calculate data for; if None, all possible durations are calculated.
     delta_t_year_gap : int
         Time gap between T_year1 and T_year2; specified in years
-    output_path : str | None
-        Optional path where the data should be written. If specified, None is returned.
 
     Returns
     -------
-    pd.DataFrame | None
+    pd.DataFrame
         A DataFrame containing ΔT values:
 
             site: Site code
@@ -47,8 +44,6 @@ def calculate_delta_t(
             start2: Starting day of year for the second inverval
             duration: Duration of the interval [days]
             delta_t: Difference in the average temperatures for the two intervals [°F]
-
-        If an output_path is specified, None is returned, and data is written to the path instead.
     """
     with util.ParallelExecutor("[green]Calculating ΔT:", processes=8) as pe:
         for site, df in mean_t.groupby(by="site"):
@@ -64,15 +59,10 @@ def calculate_delta_t(
                     "task_id": task_id,
                     "worker_status": pe.worker_status,
                     "year_gap": delta_t_year_gap,
-                    "output_path": output_path,
                 },
             )
 
-        results = pe.wait_for_results()
-
-    if output_path is None:
-        return pd.concat(results)
-    return None
+        return pd.concat(pe.wait_for_results())
 
 
 def calculate_delta_t_site_fast(
@@ -111,7 +101,7 @@ def calculate_delta_t_site_fast(
 
     Returns
     -------
-    pd.DataFrame | None
+    pd.DataFrame
         Data containing the difference in average temperature for all possible start dates of the
         intervals, for all years of data, for all possible durations. Columns:
 
@@ -122,7 +112,6 @@ def calculate_delta_t_site_fast(
             start2: Starting day of year for the second inverval
             duration: Duration of the interval [days]
             delta_t: Difference in the average temperatures for the two intervals [°F]
-
     """
     years = np.sort(df["year"].unique())[:-year_gap]
 

@@ -34,7 +34,7 @@ def test_load_weather(mock_load_excel_file):
     result = preprocess.load_weather()
 
     # Check that no nan-valued rows made it into the final dataset
-    assert result.loc[result["date"].isna()].empty
+    assert result.loc[result["tmean (degrees f)"].isna()].empty
 
 
 @mock.patch("pandas.read_excel")
@@ -42,7 +42,8 @@ def test_load_cone_crop(mock_read_excel):
     """Test that the cone crop can be loaded and preprocessed."""
     mock_read_excel.return_value = pd.DataFrame(
         {
-            "site": ["1ABAM_OR", "2ABCO_OR", "3ABCO_OR", "4ABLA_OR"],
+            "code": ["1ABAM_OR", "2ABCO_OR", "3ABCO_OR", "4ABLA_OR"],
+            "site": ["SANTIAM PASS", "ASHLAND RNA", "WICKIUP SPRINGS", "SAND MOUNTAIN"],
             "ref": [
                 "SCHULZE & FRANKLIN 2018; FRANKLIN ET AL 1974",
                 "SCHULZE & FRANKLIN 2019",
