@@ -16,6 +16,8 @@ def plot_correlation_duration_grids(
     figsize: tuple[int, int] | None = None,
     extent: tuple[int, int, int, int] | None = None,
     filename: str | None = "site_{}_correlations.svg",
+    delta_t_year_gap: int = 1,
+    crop_year_gap: int = 1,
 ) -> list[plt.Figure] | None:
     """Generate a grid of correlation plots.
 
@@ -45,6 +47,11 @@ def plot_correlation_duration_grids(
         Filename template to use for writing figures to disk. If None, a list of figures are
         returned. Otherwise, this must be a format string to save individual figures (one figure for
         each site)
+    delta_t_year_gap : int
+        Gap between years for which ΔT is calculated
+    crop_year_gap : int
+        Gap between the second year used for calculating ΔT and the year in which the cone crop is
+        correlated
 
     Returns
     -------
@@ -68,6 +75,8 @@ def plot_correlation_duration_grids(
                     "filename": filename.format(site) if filename is not None else None,
                     "task_id": task_id,
                     "worker_status": pe.worker_status,
+                    "delta_t_year_gap": delta_t_year_gap,
+                    "crop_year_gap": crop_year_gap,
                 },
             )
 
@@ -88,6 +97,8 @@ def plot_correlation_duration_grid(
     filename: str | None = None,
     task_id: int | None = None,
     worker_status: dict[int, Any] | None = None,
+    delta_t_year_gap: int = 1,
+    crop_year_gap: int = 1,
 ) -> plt.Figure | None:
     """Generate a single correlation/duration plot for all durations in the given dataset.
 
@@ -122,6 +133,11 @@ def plot_correlation_duration_grid(
     worker_status : dict[int, Any]
         Dictionary where worker status information can be written. This is a multiprocessing-safe
         object shared across all workers.
+    delta_t_year_gap : int
+        Gap between years for which ΔT is calculated
+    crop_year_gap : int
+        Gap between the second year used for calculating ΔT and the year in which the cone crop is
+        correlated
 
     Returns
     -------
@@ -198,8 +214,11 @@ def plot_correlation_duration_grid(
     )
 
     fig.suptitle(
-        r"$\rho_{\Delta T_{ij} N_k}$"
-        + f" Site: {util.code_to_site(site)}, $k = j+1 = i+2$",
+        (
+            r"$\rho_{\Delta T_{ij} N_k}$"
+            f" Site: {util.code_to_site(site)}, "
+            f"$k = j+{crop_year_gap} = i+{crop_year_gap+delta_t_year_gap}$"
+        ),
         fontsize="xx-large",
     )
 
