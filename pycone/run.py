@@ -58,7 +58,20 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         )
         correlation = util.read_data(correlation_path)
     else:
-        correlation = analysis.compute_correlation_from_mean(mean_t, cones)
+        mean_t_pines, mean_t_other = util.split_pine_sites(mean_t)
+        cones_pines, cones_other = util.split_pine_sites(cones)
+
+        correlation_others = analysis.compute_correlation_from_mean(
+            mean_t_other, cones_other
+        )
+
+        # Pines have a 3 year reproductive cycle, so treat separately
+        correlation_pines = analysis.compute_correlation_from_mean(
+            mean_t_pines, cones_pines, crop_year_gap=2
+        )
+
+        correlation = pd.concat((correlation_others, correlation_pines))
+
         util.write_data(correlation, correlation_path)
 
     return cones, weather, mean_t, correlation

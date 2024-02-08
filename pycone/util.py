@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import pathlib
+from collections.abc import Iterable
 from multiprocessing.pool import AsyncResult
 from types import TracebackType
 from typing import Any
@@ -233,23 +234,25 @@ class ParallelExecutor:
         self.results.append(self.pool.apply_async(*args, **kwargs))
 
 
-def site_to_code(site: str) -> int:
+def site_to_code(site: str | Iterable[str]) -> int | list[int]:
     """Convert a string site name to an integer code for performance.
 
     Parameters
     ----------
-    site : str
+    site : str | Iterable[str]
         Name of the site to convert
 
     Returns
     -------
-    int
+    int | list[int]
         Unique integer site code
     """
-    return SITE_CODES[site]
+    if isinstance(site, str):
+        return SITE_CODES[site]
+    return [SITE_CODES[s] for s in site]
 
 
-def code_to_site(site: int) -> str:
+def code_to_site(site: int | Iterable[int]) -> str | list[str]:
     """Map the site code to the corresponding site name.
 
     Parameters
@@ -259,10 +262,12 @@ def code_to_site(site: int) -> str:
 
     Returns
     -------
-    str
+    str | list[str]
         Original site name corresponding to the site code
     """
-    return SITE_CODES_INVERSE[site]
+    if isinstance(site, int):
+        return SITE_CODES_INVERSE[site]
+    return [SITE_CODES_INVERSE[s] for s in site]
 
 
 def make_pixel_map(
@@ -320,3 +325,51 @@ def downcast_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         Casted dataframe
     """
     return df.astype({key: val for key, val in DTYPES.items() if key in df.columns})
+
+
+def split_pine_sites(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a dataset with a `sites` column into two: the pines and the others.
+
+    A site is considered to be a pine site if it has either 'pila' or 'pimo' in the site name.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataset containing at least one column: `sites`
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        (Pine data, other species data)
+    """
+    pine_sites = []
+    other_sites = []
+
+    for site in SITE_CODES:
+        if string_contains(site.lower(), ["pila", "pimo"]):
+            pine_sites.append(site)
+        else:
+            other_sites.append(site)
+
+    return (
+        df.loc[df["site"].isin(site_to_code(pine_sites))],
+        df.loc[df["site"].isin(site_to_code(other_sites))],
+    )
+
+
+def string_contains(string: str, substr: Iterable[str]) -> bool:
+    """Test whether a string contains any of the specified substrings.
+
+    Parameters
+    ----------
+    string : str
+        String to check the presence of substrings for
+    substr : Iterable[str]
+        Substrings to check
+
+    Returns
+    -------
+    bool
+        True if at least one of the substrings is present in the string
+    """
+    return any(s in string for s in substr)
