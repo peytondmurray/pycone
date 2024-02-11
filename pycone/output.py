@@ -1,3 +1,4 @@
+import itertools
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -374,3 +375,44 @@ def plot_site_colormap(
             label=colorbar if isinstance(colorbar, str) else data_col,
         )
     return im
+
+
+def plot_cone_crop(df: pd.DataFrame, nrows: int = 9, ncols: int = 6) -> plt.Figure:
+    """Plot the cone crops for all years.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Cone data
+    nrows : int
+        Number of rows of plots to make; nrows*ncols must be greater than or equal to the number of
+        unique sites
+    ncols : int
+        Number of columns of plots to make
+
+    Returns
+    -------
+    plt.Figure
+        Matplotlib figure containing a plot of the number of cones for each site
+    """
+    fig, ax = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(40, 60),
+        sharex="all",
+        sharey="all",
+    )
+
+    sites = np.sort(df["site"].unique())
+
+    # Iterate over sites/axes until we run out of sites to plot
+    for site, (i, j) in zip(
+        sites, itertools.product(range(nrows), range(ncols)), strict=False
+    ):
+        site_df = df.loc[df["site"] == site]
+        ax[i, j].plot(site_df["year"], site_df["cones"], "-ok")
+        ax[i, j].set_xlabel("year")
+        ax[i, j].set_ylabel("cones")
+        ax[i, j].set_title(f"Site {site}")
+
+    return fig

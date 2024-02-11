@@ -1,5 +1,6 @@
 import pathlib
 
+import matplotlib.pyplot as plt
 import pandas as pd
 from rich.console import Console
 from rich.style import Style
@@ -103,3 +104,10 @@ def run_analysis():
         extent=[50, 280, 50, 280],
         filename="site_{}_correlations.svg",
     )
+
+
+def make_cone_crop_plot():
+    """Generate a plot of the cone crops for all sites."""
+    cones, weather, mean_t, correlation = get_data()
+    output.plot_cone_crop(cones)
+    plt.show()
