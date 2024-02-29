@@ -157,7 +157,7 @@ def test_calculate_delta_t():
         }
     )
 
-    result = pycone.analysis.calculate_delta_t(data)
+    result = pycone.analysis.delta_t_parallel(data)
 
     # For each site, start, duration, and pair of years there's a delta_t that is computed.
     # Here we have for each site: 5 days (year 1) * 5 days (year 2) * 1 duration = 25 values.

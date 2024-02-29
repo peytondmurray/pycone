@@ -1,4 +1,5 @@
 import pathlib
+import re
 
 import pandas as pd
 from rich.console import Console
@@ -9,22 +10,19 @@ from . import analysis, output, preprocess, util
 console = Console()
 
 
-def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Run the analysis to generate correlation data, or fetch it from disk if it exists already.
+def load_cones() -> pd.DataFrame:
+    """Load the preprocessed cones.
+
+    If the preprocessed data exists in the current directory, that data is loaded. Otherwise the
+    original cone data is loaded, preprocessed, saved, and returned.
 
     Returns
     -------
-    tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
-        (cones, weather, mean_t, correlation) data
+    pd.DataFrame
+        Preprocessed cone data
     """
     cones_path = pathlib.Path("cones.csv")
-    weather_path = pathlib.Path("weather.csv")
-    mean_t_path = pathlib.Path("mean_t.csv")
-    correlation_path = pathlib.Path("correlation.csv")
-
-    console.rule(
-        "[bold yellow]Load weather and cone data", style=Style(color="dark_red")
-    )
+    console.rule("[bold yellow]Load cone data", style=Style(color="dark_red"))
     if cones_path.exists():
         console.log(f"{cones_path} already exists in the current directory; skipping.")
         cones = util.read_data(cones_path)
@@ -32,6 +30,22 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         cones = preprocess.load_cone_crop(cones_path)
         util.write_data(cones, cones_path)
 
+    return cones
+
+
+def load_weather() -> pd.DataFrame:
+    """Load the preprocessed weather data.
+
+    If the preprocessed data exists in the current directory, that data is loaded. Otherwise the
+    original weather data is loaded, preprocessed, saved, and returned.
+
+    Returns
+    -------
+    pd.DataFrame
+        Preprocessed weather data
+    """
+    weather_path = pathlib.Path("weather.csv")
+    console.rule("[bold yellow]Load weather data", style=Style(color="dark_red"))
     if weather_path.exists():
         console.log(
             f"{weather_path} already exists in the current directory; skipping."
@@ -41,6 +55,26 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         weather = preprocess.load_weather(weather_path)
         util.write_data(weather, weather_path)
 
+    return weather
+
+
+def compute_mean_t(weather: pd.DataFrame) -> pd.DataFrame:
+    """Load the mean temperature data.
+
+    If the data exists in the current directory, that data is loaded. Otherwise the
+    mean temperature is calculated, saved, and returned.
+
+    Parameters
+    ----------
+    weather : pd.DataFrame
+        Weather data to be used to calculate the mean temperature
+
+    Returns
+    -------
+    pd.DataFrame
+        Mean temperature data
+    """
+    mean_t_path = pathlib.Path("mean_t.csv")
     console.rule(
         "[bold yellow]Compute the mean temperature", style=Style(color="dark_red")
     )
@@ -51,34 +85,54 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         mean_t = analysis.calculate_mean_t(weather)
         util.write_data(mean_t, mean_t_path)
 
+    return mean_t
+
+
+def compute_correlation(
+    cones: pd.DataFrame,
+    mean_t: pd.DataFrame,
+    groups: list[util.Group],
+    output: str | pathlib.Path = "correlation.csv",
+) -> pd.DataFrame:
+    """Compute the correlation between the ΔT and cone crop data for groups of sites.
+
+    If the data exists in the current directory, that data is loaded. Otherwise ΔT
+    data is calculated, correlated with the cone crop, and the correlation coefficient
+    is returned.
+
+    Parameters
+    ----------
+    cones : pd.DataFrame
+        Cone crop data
+    mean_t : pd.DataFrame
+        Mean temperature data
+    groups: list[util.Group]
+        List of site groups to use when correlating the cone crops to the ΔT data
+    output: str | pathlib.Path
+        Path to save the resulting correlation data
+
+    Returns
+    -------
+    pd.DataFrame
+        Correlation between ΔT and the number of cones for groups of sites
+    """
+    correlation_path = pathlib.Path(output)
     console.rule("[bold yellow]Compute the correlation", style=Style(color="dark_red"))
     if correlation_path.exists():
         console.log(
             f"{correlation_path} already exists in the current directory; skipping."
         )
-        correlation = util.read_data(correlation_path)
+        corr = util.read_data(correlation_path)
     else:
-        mean_t_pines, mean_t_other = util.split_pine_sites(mean_t)
-        cones_pines, cones_other = util.split_pine_sites(cones)
+        corr = analysis.correlation(mean_t=mean_t, cones=cones, groups=groups)
 
-        correlation_others = analysis.compute_correlation_from_mean(
-            mean_t_other, cones_other
-        )
+        util.write_data(corr, correlation_path)
 
-        # Pines have a 3 year reproductive cycle, so treat separately
-        correlation_pines = analysis.compute_correlation_from_mean(
-            mean_t_pines, cones_pines, crop_year_gap=2
-        )
-
-        correlation = pd.concat((correlation_others, correlation_pines))
-
-        util.write_data(correlation, correlation_path)
-
-    return cones, weather, mean_t, correlation
+    return corr
 
 
 def run_analysis():
-    """Run the pycone analysis.
+    """Run the pycone analysis for each site separately.
 
     This function will load the weather and cone data and do some preprocessing. The resulting
     dataframes will be written to the current directory as 'weather.csv' and 'cones.csv',
@@ -92,14 +146,80 @@ def run_analysis():
     start date and duration of the intervals on every pair of years. This data is so large that it
     is impractical to write to disk, so at this point we just calculate the correlation between ΔT
     and the number of cones for the site.
-
     """
-    cones, weather, mean_t, correlation = get_data()
+    cones = load_cones()
+    weather = load_weather()
+    mean_t = compute_mean_t(weather)
+
+    groups = []
+    pine_sites, other_sites = util.separate_pine_sites(mean_t["site"].unique())
+    # Build the data structure which controls how correlations are computed
+    # Pines have a 3 year reproductive cycle, so treat separately
+    for site in mean_t["site"].unique():
+        groups.append(
+            util.Group(
+                name=util.code_to_site(site),
+                sites=[site],
+                crop_year_gap=2 if site in pine_sites else 1,
+                delta_t_year_gap=1,
+            )
+        )
+
+    correlation = compute_correlation(
+        mean_t=mean_t, cones=cones, groups=groups, output="correlation.csv"
+    )
+
     output.plot_correlation_duration_grids(
         correlation,
+        groups=groups,
         nrows=18,
         ncols=12,
         figsize=(40, 60),
         extent=[50, 280, 50, 280],
-        filename="site_{}_correlations.svg",
+        filename="group_{}_correlations.svg",
+    )
+
+
+def run_batch_analysis():
+    """Run the pycone analysis, grouping the sites with the same species together."""
+    cones = load_cones()
+    weather = load_weather()
+    mean_t = compute_mean_t(weather)
+
+    groups = {}
+    for site, code in util.SITE_CODES.items():
+        # Extract the 4-letter species name from the site code,
+        # grouping all sites for the same species together
+        matched = re.match(r"\d+(?P<abbrev>\w+)_[A-Z]+", site)
+        if not matched:
+            raise ValueError("No match found for site code.")
+
+        species = matched.group("abbrev")
+        if species in groups:
+            groups[species].sites.append(code)
+        else:
+            groups[species] = util.Group(
+                name=species,
+                sites=[code],
+                crop_year_gap=2
+                if util.string_contains(species, ["PIMO", "PILA"])
+                else 1,
+                delta_t_year_gap=1,
+            )
+
+    correlation = compute_correlation(
+        mean_t=mean_t,
+        cones=cones,
+        groups=groups.values(),
+        output="correlation_grouped.csv",
+    )
+
+    output.plot_correlation_duration_grids(
+        correlation,
+        groups=groups.values(),
+        nrows=18,
+        ncols=12,
+        figsize=(40, 60),
+        extent=[50, 280, 50, 280],
+        filename="sites_{}_correlations_grouped.svg",
     )
