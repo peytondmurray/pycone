@@ -11,13 +11,12 @@ from . import util
 
 def plot_correlation_duration_grids(
     data: pd.DataFrame,
+    groups: list[util.Group],
     nrows: int = 18,
     ncols: int = 12,
     figsize: tuple[int, int] | None = None,
     extent: tuple[int, int, int, int] | None = None,
     filename: str | None = "site_{}_correlations.svg",
-    delta_t_year_gap: int = 1,
-    crop_year_gap: int = 1,
 ) -> list[plt.Figure] | None:
     """Generate a grid of correlation plots.
 
@@ -35,6 +34,9 @@ def plot_correlation_duration_grids(
             duration
             correlation
 
+    groups : list[util.Group]
+        List of groups containing site id codes and other correlation kwargs. These groups inform
+        this function how the data was calculated and how to plot the data.
     nrows : int
         Number of rows of 2D colormaps to plot on a single figure
     ncols : int
@@ -58,25 +60,24 @@ def plot_correlation_duration_grids(
     list[plt.Figure | None]
         A list of figures (if `filename == None`), or None if figures are to be written to disk
     """
-    gb = data.groupby(by="site")
-    sites, site_dfs = tuple(zip(*tuple(gb), strict=True))
-
     with util.ParallelExecutor("Generating correlation plots...", processes=8) as pe:
-        for site, site_df in zip(sites, site_dfs, strict=True):
-            task_id = pe.add_task(f"Site: {site}", visible=False)
+        for group in groups:
+            task_id = pe.add_task(f"Group: {group.name}", visible=False)
             pe.apply_async(
                 plot_correlation_duration_grid,
-                (site_df, site),
+                (data.loc[data["group"] == group.name],),
                 {
+                    "group": group,
                     "nrows": nrows,
                     "ncols": ncols,
                     "figsize": figsize,
                     "extent": extent,
-                    "filename": filename.format(site) if filename is not None else None,
+                    "filename": filename.format(group.name)
+                    if filename is not None
+                    else None,
                     "task_id": task_id,
                     "worker_status": pe.worker_status,
-                    "delta_t_year_gap": delta_t_year_gap,
-                    "crop_year_gap": crop_year_gap,
+                    **group.correlation_kwargs,
                 },
             )
 
@@ -88,8 +89,8 @@ def plot_correlation_duration_grids(
 
 
 def plot_correlation_duration_grid(
-    site_df: pd.DataFrame,
-    site: int,
+    group_df: pd.DataFrame,
+    group: util.Group,
     nrows: int = 18,
     ncols: int = 12,
     figsize: tuple[int, int] | None = None,
@@ -104,7 +105,7 @@ def plot_correlation_duration_grid(
 
     Parameters
     ----------
-    site_df : pd.DataFrame
+    group_df : pd.DataFrame
         Correlation data for a single site; must have columns
 
             start1
@@ -113,8 +114,8 @@ def plot_correlation_duration_grid(
             duration
             correlation
 
-    site : int
-        Site from which the given `site_df` data was computed
+    group : util.Group
+        Group from which the given `group_df` data was computed
     nrows : int
         Number of rows of 2D colormaps to plot on a single figure
     ncols : int
@@ -148,7 +149,7 @@ def plot_correlation_duration_grid(
     if figsize is None:
         figsize = (40, 60)
 
-    durations = np.sort(site_df["duration"].unique())
+    durations = np.sort(group_df["duration"].unique())
 
     # Largest duration is 213, but 216 has a pair of nice divisors. 3 empty plots left over :)
     fig, ax = plt.subplots(
@@ -176,7 +177,7 @@ def plot_correlation_duration_grid(
         axis = ax[ax_row, ax_col]
 
         im = plot_site_colormap(
-            site_df.loc[site_df["duration"] == duration],
+            group_df.loc[group_df["duration"] == duration],
             ax=axis,
             xcol="start1",
             ycol="start2",
@@ -216,7 +217,7 @@ def plot_correlation_duration_grid(
     fig.suptitle(
         (
             r"$\rho_{\Delta T_{ij} N_k}$"
-            f" Site: {util.code_to_site(site)}, "
+            f" Group: {group}, "
             f"$k = j+{crop_year_gap} = i+{crop_year_gap+delta_t_year_gap}$"
         ),
         fontsize="xx-large",
@@ -347,16 +348,15 @@ def plot_site_colormap(
         **kwargs,
     )
 
-    site = df.iloc[0]["site"]
-    if isinstance(site, int):
-        site = util.code_to_site(site)
-
     if title:
-        ax.set_title(
-            title
-            if isinstance(title, str)
-            else f"Site {site}, duration {df.iloc[0]['duration']}"
-        )
+        if isinstance(title, str):
+            ax.set_title(title)
+        else:
+            site = df.iloc[0]["site"]
+            if isinstance(site, int):
+                site = util.code_to_site(site)
+
+            ax.set_title(f"Site {site}, duration {df.iloc[0]['duration']}")
     if xlabel:
         ax.set_xlabel(xlabel if isinstance(xlabel, str) else xcol)
     if ylabel:

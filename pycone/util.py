@@ -89,7 +89,7 @@ def write_data(df: pd.DataFrame, path: str | pathlib.Path):
     path : str | pathlib.Path
         Path to write the data to
     """
-    if df["site"].dtype == "object":
+    if "site" in df.columns and df["site"].dtype == "object":
         df = df.replace({"site": SITE_CODES})
 
     with open(path, "w") as f:
@@ -327,6 +327,33 @@ def downcast_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     return df.astype({key: val for key, val in DTYPES.items() if key in df.columns})
 
 
+def separate_pine_sites(sites: Iterable[str]) -> tuple[list[str], list[str]]:
+    """Separate a list of sites into two groups: pines, and other species.
+
+    Parameters
+    ----------
+    sites : Iterable[str | int]
+        List of sites to separate out.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        [pine sites, other sites]
+    """
+    pine_sites, other_sites = [], []
+
+    for site in sites:
+        if isinstance(site, int):
+            site = code_to_site(site)
+
+        if string_contains(site.lower(), ["pila", "pimo"]):
+            pine_sites.append(site)
+        else:
+            other_sites.append(site)
+
+    return pine_sites, other_sites
+
+
 def split_pine_sites(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split a dataset with a `sites` column into two: the pines and the others.
 
@@ -373,3 +400,32 @@ def string_contains(string: str, substr: Iterable[str]) -> bool:
         True if at least one of the substrings is present in the string
     """
     return any(s in string for s in substr)
+
+
+class Group:
+    """Class which stores information about site groupings for correlations.
+
+    A Group can represent a single site or multiple sites grouped together.
+    """
+
+    def __init__(self, name: str, sites: list[int] | None = None, **correlation_kwargs):
+        """Instantiate a Group.
+
+        Parameters
+        ----------
+        name : str
+            Name of the group
+        sites : list[int] | None
+            Site codes which are members of the group
+        **correlation_kwargs
+            Other kwargs to be passed to analysis.correlation_group
+        """
+        self.name = name
+        self.sites = sites if sites else []
+        self.correlation_kwargs = correlation_kwargs if correlation_kwargs else {}
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return vars(self)
