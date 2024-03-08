@@ -17,7 +17,7 @@ authors = [
 ]
 description = "Statistical Analysis for Cone Production"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -31,6 +31,7 @@ dependencies = [
     "openpyxl",
     "rich",
     "pyside6",
+    "pymc",
 ]
 
 [project.urls]
