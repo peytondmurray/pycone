@@ -161,3 +161,6 @@ cython_debug/
 
 # Temporary libreoffice files
 .~lock.*
+
+# Temporary nvim typst output
+output.pdf

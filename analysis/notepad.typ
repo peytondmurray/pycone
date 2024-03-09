@@ -27,6 +27,7 @@ $
 x(t)
 y(t)
 tau
+hat(R)
 $
 
 #pagebreak()
@@ -84,3 +85,86 @@ means that there will be constructive and destructive interference. So we should
 systems which behave this way to have interesting behavior in the frequency domain.
 
 Let's return our cone crop model and apply the same mathematics used to analyze these circuits:
+
+#pagebreak()
+
+== Numerical Analysis
+
+=== General questions
+
+- Why is Pearson's correlation coefficient insufficient?
+
+In general, we don't expect there to be a simple linear relationship between $n$ and $T$.
+- Even the simplest models such as the crude one introduced here aren't linear
+- We know that masting events happen. These clearly are nonlinear processes because the yield does
+  not scale linearly with the tempearture or with $Delta T$.
+
+- Why aren't you just using method X?
+
+This bayesian approach is just one method. You could do X. You could do whatever. This is just one
+method. I think it has some nice features that make it useful, so that's why I chose it.
+
+=== How do we know if our analysis is working?
+
++ Convergence diagnostics
+    - Look at sample traces. The MCMC sampler produces a Markov Chain that samples from the posterior
+      distribution. If the chain has converged, i.e. the mean has stabilized, the variance remains
+      constant - then we know we've converged.
+    - There are no divergences: a chain doesn't wander off into regions of low probability.
+    - Bayesian fraction of missing information (BFMI). The latest gradient-based samplers like what
+      you find in modern probabilistic programming packages use a family of solvers called Hamiltonian
+      Monte Carlo methods to sample from the posterior distribution. These methods use Hamilton's
+      equations of motion to do that - in essence, they're simulating how particles move around in a
+      potential well, and they're generating samples from the posterior distribution from the position
+      of the particles at various timesteps. And it turns out you can look at the energy at each
+      step relative to the overall energy, you can estimate how well a sampler has been exploring
+      the posterior distribution.
+    - Similarly you can look at a plot of the energy transitions at each step for your chains, and
+      compare that to the overall energy after fitting.
+    - You can also look at something called the Potential Scale Reduction Factor (R-hat), which is
+      basically an analysis of variance of different traces. Essentially you compare the variation
+      in an individual chain to the variation between chains. And if they're the same, you've
+      probably got a good fit. If your chains are in different spots, the between variance is wider
+      than the variance within.
+
++ Goodness of fit
+    - The best way to do this is to compare the output of your model to the data that was used to
+      fit the model. Remember - we’re writing down an actual PDF that we think represents the
+      generative processes that we think produced the ΔT and n measurements. So if we draw a bunch
+      of samples from that model, ourdata should look just like more samples from that model.
+      Otherwise we can't really claim that we're modeling the process that generated our data.
+
+      The way that you can do this is using something called Posterior Predictive Checks, which
+      involves sampling from the Posterior Predictive Distribution. The Posterior Predictive
+      Distribution gives the probability of obtaining some new data $D_"new"$ given existing data
+      $D$. So recall that for a fixed value of our model $theta$, our data $D$ follows the
+      likelihood distribution:
+
+      $
+      cal(L)(D|theta)
+      $
+
+      and our posterior distribution tells us the probability of our model given our data:
+
+      $
+      cal(P)(theta|D)
+      $
+
+      However, the true value of our model $theta$ is uncertain, so we should average over the
+      possible values of $theta$ to get the distribution of $D_"new"$ _given_ the existing data $D$.
+
+
+      $
+      p(D_"new"|D) = integral cal(L)(D_"new"|theta) cal(P)(theta|D) d theta
+      $
+
+      Here, $D_"new"$ is hypothetical new data that would be expected, taking into account the
+      posterior uncertainty in the model parameters. Here $cal(P)(theta|D)$ is the posterior
+      distribution - the probability of the model given the data that we've calculated numerically,
+      and $cal(L)(D_"new"|theta)$ is our likelihood - we're drawing values from our likelihood.
+
+      So what this does is include the residual uncertainty in our parameters in addition to the
+      stochastic sampling uncertainty that comes from drawing from a distribution.
+
+      Modern probabilistic programming packages will give you this for free, so it can actually be
+      really straightforward to carry out this kind of analysis.
