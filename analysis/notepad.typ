@@ -28,7 +28,23 @@ x(t)
 y(t)
 tau
 hat(R)
+beta
 $
+
+$
+n(t) = alpha Delta T underbrace((t - tau_0), "\"crop year\ngap\"") - beta n underbrace((t - tau_1), "\"crop\ninterval\"")
+$
+$
+y(t) &= x(t) && + beta y(t-tau) \
+n(t) &= alpha Delta T(t - tau_0) && - beta n(t - tau_1)
+$
+
+$
+frak(L)(f(t)) = tilde(f)(s) = integral_0^(infinity) f(t)e^(-s t) d t &
+$
+
+where $s = sigma + i omega$
+
 
 #pagebreak()
 
@@ -52,21 +68,25 @@ you about today.
 == First principles modeling
 
 Energy to produce cones comes from sunlight. It's hard to measure solar flux, but let's make the
-crude assumption that the temperature is proportional to the energy available from sunlight.
+crude assumption that the energy available from sunlight is some function of the temperature. Now
+for the sake of connecting this to previous work that was done, and to our discussion of $Delta T$
+previously, I'm writing down a model which includes $Delta T$, and for the moment I'm going
+to push to the back of our minds questions we might have about doing that. I'll talk about the
+validity of that choice later on when we discuss other models.
 
-In a simple model that includes $Delta T$, the energy available to produce some number of cones in a
-stand is proportional to $Delta T$ at a time in the past #footnote[During the differentiation, or possibly
-during vegetative priming or some other important time during the reproductive cycle. The fact that
-it's hard to talk about the meaning of $Delta T$ _at a specific time_ is probably an indication here
-that there's a more appropriate model], but that energy budget is reduced by the amount of energy
-used to produce cones in the previous crop some time $tau_1$ ago:
+In a simple model that includes $Delta T$, let's model the energy available to produce some number
+of cones in a stand as proportional to $Delta T$ at a time in the past #footnote[During the
+differentiation, or possibly during vegetative priming or some other important time during the
+reproductive cycle. The fact that it's hard to talk about the meaning of $Delta T$ _at a specific
+time_ is probably an indication here that there's a more appropriate model], but that energy budget
+is reduced by the amount of energy used to produce cones in the previous crop some time $tau_1$ ago:
 
 $
 n(t) = alpha Delta T(t - tau_0) - beta n(t - tau_1)
 $
 
 Recurrence (or difference) equations very similar to this have been studied before in the context of
-signal processing. In that context, there closest analogy is called a comb filter:
+signal processing. In that context, there's a close analogy called the comb filter:
 
 #figure(
     image("images/feedback_comb_filter.png", width: 80%),
@@ -76,13 +96,31 @@ Here, the output signal $y(t)$ is composed of an input signal $x(t)$ plus a part
 signal from $tau$ time ago $y(t-tau)$:
 
 $
-y(t) = x(t) + alpha y(t-tau)
+y(t) = x(t) + beta y(t-tau)
 $
 
 These systems are usually studied not in the time domain but rather in the frequency domain, and
 there's a good reason for that: the fact that you're adding a delayed version of a signal to itself
 means that there will be constructive and destructive interference. So we should naturally expect
 systems which behave this way to have interesting behavior in the frequency domain.
+
+So applying the laplace transform we have:
+
+
+$
+tilde(y)(s) = tilde(x)(s) + beta e^(-s tau) tilde(y)(s)
+$
+
+Then taking the ratio of the transformed output to the transformed input we get the so-called
+Transfer Function, which tells us the frequency response of the system:
+
+$
+frac(tilde(y)(s), tilde(x)(s)) = frac(1, 1-beta e^(-s tau))
+$
+
+This is a complex function whose magnitude has peaks and valleys when the denominator is minimized
+and maximized for different input frequencies $s$.
+
 
 Let's return our cone crop model and apply the same mathematics used to analyze these circuits:
 
