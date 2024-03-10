@@ -45,6 +45,8 @@ $
 
 where $s = sigma + i omega$
 
+where $s$ is complex
+
 
 #pagebreak()
 
@@ -115,7 +117,7 @@ Then taking the ratio of the transformed output to the transformed input we get 
 Transfer Function, which tells us the frequency response of the system:
 
 $
-frac(tilde(y)(s), tilde(x)(s)) = frac(1, 1-beta e^(-s tau))
+H(s) = frac(tilde(y)(s), tilde(x)(s)) = frac(1, 1-beta e^(-s tau))
 $
 
 This is a complex function whose magnitude has peaks and valleys when the denominator is minimized
@@ -123,6 +125,26 @@ and maximized for different input frequencies $s$.
 
 
 Let's return our cone crop model and apply the same mathematics used to analyze these circuits:
+
+$
+n(t) = alpha Delta T(t - tau_0) - beta n(t - tau_1)
+$
+
+Applying the transform:
+
+$
+tilde(n)(s) = alpha e^(-s tau_0) tilde(Delta T)(s) - beta e^(-s tau_1)n(s)
+$
+
+Calculating the transfer function:
+
+$
+H(s) = frac(alpha e^(-s tau_0), 1 + beta e^(-s tau_1))
+$
+
+where $beta <= 0 <= 1$. Let's look at the magnitude of the transfer function for $s = i omega$:
+
+
 
 #pagebreak()
 
