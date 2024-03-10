@@ -7,11 +7,11 @@ wtau = np.linspace(0, np.pi * 10, 10000)
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 
-betas = np.arange(-0.9, 0.9, 0.2)
+betas = np.arange(0, 1, 0.2)
 colors = plt.cm.viridis_r((betas - min(betas)) / (max(betas) - min(betas)))
 
 for beta, color in zip(betas, colors, strict=True):
-    h = alpha / np.sqrt(1 + beta**2 - 2 * beta * np.cos(wtau))
+    h = alpha / np.sqrt(1 + beta**2 + 2 * beta * np.cos(wtau))
     ax.plot(wtau / np.pi, h, "-", color=color, label=rf"$\beta = {beta}$")
 ax.xaxis.set_major_formatter(FormatStrFormatter(r"%g$\pi$"))
 ax.xaxis.set_major_locator(MultipleLocator(base=1.0))
@@ -24,5 +24,5 @@ for spine in ax.spines.values():
     spine.set_linewidth(2)
 fig.legend(loc="upper right")
 fig.tight_layout()
-fig.savefig("comb_filter.svg")
+fig.savefig("cone_filter.svg")
 plt.show()

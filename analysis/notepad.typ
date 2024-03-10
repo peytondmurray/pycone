@@ -130,19 +130,23 @@ $
 n(t) = alpha Delta T(t - tau_0) - beta n(t - tau_1)
 $
 
-Applying the transform:
+Apply the transform:
 
 $
 tilde(n)(s) = alpha e^(-s tau_0) tilde(Delta T)(s) - beta e^(-s tau_1)n(s)
 $
 
-Calculating the transfer function:
+Calculate the transfer function:
 
 $
 H(s) = frac(alpha e^(-s tau_0), 1 + beta e^(-s tau_1))
 $
 
 where $beta <= 0 <= 1$. Let's look at the magnitude of the transfer function for $s = i omega$:
+
+$
+|H(i omega)| = frac(alpha, sqrt(1 + beta^2 + 2 beta cos(omega tau_1)))
+$
 
 
 
