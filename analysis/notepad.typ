@@ -121,8 +121,15 @@ H(s) = frac(tilde(y)(s), tilde(x)(s)) = frac(1, 1-beta e^(-s tau))
 $
 
 This is a complex function whose magnitude has peaks and valleys when the denominator is minimized
-and maximized for different input frequencies $s$.
+and maximized for different input frequencies $s$. If we plot the magnitude as a function of
+frequency:
 
+#figure(
+    image("images/comb_filter_spectrum.png", width: 80%),
+)
+
+The frequency response depends on the value of $beta$; negative values show peaks at
+$omega tau = (2n+1)pi$, while positive values of $beta$ results in peaks at $omega tau = 2 pi n$.
 
 Let's return our cone crop model and apply the same mathematics used to analyze these circuits:
 
@@ -148,7 +155,15 @@ $
 |H(i omega)| = frac(alpha, sqrt(1 + beta^2 + 2 beta cos(omega tau_1)))
 $
 
+Plotting the magnitude of the transfer function vs frequency, we get peaks very similar to what we
+saw with the comb filter:
 
+#figure(
+    image("images/cone_filter_spectrum.png", width: 80%),
+)
+
+Importantly, $beta$ cannot take on negative values here, so the only peaks appear for
+$omega tau_1 = (2n + 1)pi$.
 
 #pagebreak()
 
