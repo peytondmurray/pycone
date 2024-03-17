@@ -1,10 +1,14 @@
+from collections import defaultdict
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import Colormap
+from matplotlib.ticker import FuncFormatter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.fft import fft, fftfreq
+from scipy.interpolate import griddata
 
 from . import util
 
@@ -374,3 +378,88 @@ def plot_site_colormap(
             label=colorbar if isinstance(colorbar, str) else data_col,
         )
     return im
+
+
+def plot_fequency(
+    mean_t: pd.DataFrame,
+    cones: pd.DataFrame,
+    site: int = 9,
+    n_years_lag: int = 3,
+    year_to_investigate: int = 1991,
+):
+    """Plot a spectrogram of the ΔT frequencies as a function of year.
+
+    Parameters
+    ----------
+    mean_t : pd.DataFrame
+        Mean temperature data
+    cones : pd.DataFrame
+        Cone crop data
+    site : int
+        Site to display
+    n_years_lag : int
+        Number of years to include in the running FFT
+    year_to_investigate : int
+        Display additional frequency data from this year
+    """
+    df = mean_t.loc[mean_t["site"] == site].sort_values(by=["year", "day_of_year"])
+    dfc = cones.loc[cones["site"] == site].sort_values(by=["year"])
+
+    results = defaultdict(list)
+
+    for year in df["year"].unique()[n_years_lag:]:
+        df_year = df.loc[(df["year"] > year - n_years_lag) & (df["year"] <= year)]
+
+        n = len(df_year)
+
+        psd = np.abs(fft(df_year["tmean (degrees f)"].values)[: n // 2])
+        f = fftfreq(n, d=1)[: n // 2]
+        y = np.full(f.size, year)
+
+        results["psd"].append(psd)
+        results["f"].append(f)
+        results["year"].append(y)
+
+    result = pd.DataFrame({key: np.concatenate(arrs) for key, arrs in results.items()})
+
+    y = np.linspace(result["year"].min(), result["year"].max() + 1, 1000)
+    f = np.linspace(0, result["f"].max(), 1000)
+
+    yy, ff = np.meshgrid(y, f)
+
+    psd_interpolated = griddata(
+        (result["year"], result["f"]), result["psd"], (yy, ff), method="linear"
+    )
+
+    y107 = np.argmin(np.abs((1 / y) - 107))
+    year_107 = yy[y107, :]
+    psd_107 = psd_interpolated[y107, :]
+
+    def update_ticks(x: float, _: float) -> float:
+        """Update frequency tick label values to instead display their periods."""
+        return 1 / x
+
+    fig, ax = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
+    ax[0].plot(dfc["year"], dfc["cones"], "-k")
+    ax[1].plot(year_107, psd_107, "-k")
+    ax[2].imshow(
+        np.log(psd_interpolated),
+        extent=[
+            result["year"].min(),
+            result["year"].max(),
+            result["f"].min(),
+            result["f"].max(),
+        ],
+        cmap="viridis",
+        aspect="auto",
+        origin="lower",
+    )
+    ax[2].yaxis.set_major_formatter(FuncFormatter(update_ticks))
+
+    r_df = result.loc[result["year"] == year_to_investigate]
+
+    fig, ax = plt.subplots(1, 1, figsize=(20, 10), sharex=True)
+    ax.plot(r_df["f"], r_df["psd"], "-k")
+    ax.xaxis.set_major_formatter(FuncFormatter(update_ticks))
+
+    plt.show()
