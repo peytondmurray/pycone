@@ -223,3 +223,11 @@ def run_batch_analysis():
         extent=[50, 280, 50, 280],
         filename="sites_{}_correlations_grouped.svg",
     )
+
+
+def show_fft():
+    """Show the fft of the cone crop data."""
+    cones = load_cones()
+    weather = load_weather()
+
+    output.plot_fequency(weather, cones)
