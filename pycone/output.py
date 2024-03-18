@@ -104,6 +104,7 @@ def plot_correlation_duration_grid(
     worker_status: dict[int, Any] | None = None,
     delta_t_year_gap: int = 1,
     crop_year_gap: int = 1,
+    kind: util.CorrelationType | None = None,
 ) -> plt.Figure | None:
     """Generate a single correlation/duration plot for all durations in the given dataset.
 
@@ -143,6 +144,8 @@ def plot_correlation_duration_grid(
     crop_year_gap : int
         Gap between the second year used for calculating ΔT and the year in which the cone crop is
         correlated
+    kind : util.CorrelationType
+        Correlation type to use
 
     Returns
     -------
@@ -152,6 +155,15 @@ def plot_correlation_duration_grid(
     """
     if figsize is None:
         figsize = (40, 60)
+
+    if crop_year_gap == 1:
+        year_i = "T_2"
+        year_j = "T_1"
+        year_k = "T_0"
+    elif crop_year_gap == 2:
+        year_i = "T_3"
+        year_j = "T_2"
+        year_k = "T_0"
 
     durations = np.sort(group_df["duration"].unique())
 
@@ -195,12 +207,31 @@ def plot_correlation_duration_grid(
         axis.text(
             0.75, 0.05, f"$d$ = {duration}", transform=ax[ax_row, ax_col].transAxes
         )
+        axis.set_xlim(50, 300)
+        axis.set_ylim(50, 300)
+        axis.set_xticks(
+            [60, 91, 121, 152, 182, 213, 244, 274],
+            labels=["Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"],
+        )
+        axis.set_yticks(
+            [60, 91, 121, 152, 182, 213, 244, 274],
+            labels=["Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"],
+        )
+
+        axis.axvline(x=91, color="k")
+        axis.axvline(x=121, color="k")
+        axis.axvline(x=152, color="k")
+        axis.axvline(x=213, color="k")
 
         if ax_row == nrows - 1 and ax_col == ncols // 2:
-            axis.set_xlabel("Start of interval for year $i$", fontsize="x-large")
+            axis.set_xlabel(
+                f"Start of interval for year ${year_i}$", fontsize="x-large"
+            )
 
         if ax_col == 0 and ax_row == nrows // 2:
-            axis.set_ylabel("Start of interval for year $j$", fontsize="x-large")
+            axis.set_ylabel(
+                f"Start of interval for year ${year_j}$", fontsize="x-large"
+            )
 
         if is_subprocess:
             worker_status[task_id] = {"items_completed": i + 1, "total": len(durations)}  # type: ignore
@@ -211,18 +242,28 @@ def plot_correlation_duration_grid(
 
     # Add an axis for colorbars in the unused space in the bottom right of the figure
     cax = fig.add_axes([0.85, 0.03, 0.1, 0.005])
+
+    if kind == util.CorrelationType.DEFAULT:
+        correlation_text = r"$\rho_{\Delta T N}$"
+    elif kind == util.CorrelationType.EXP_DT:
+        correlation_text = r"$\rho_{exp(\Delta T) N}$"
+    elif kind == util.CorrelationType.EXP_DT_OVER_N:
+        correlation_text = r"$\rho_{exp(\Delta T/N) N}$"
+    else:
+        correlation_text = ""
+
     fig.colorbar(
         im,
         cax=cax,
-        label="Correlation " + r"$\rho_{\Delta T_{ij} N_k}$",
+        label=f"Correlation {correlation_text}",
         orientation="horizontal",
     )
 
     fig.suptitle(
         (
-            r"$\rho_{\Delta T_{ij} N_k}$"
+            f"{correlation_text}"
             f" Group: {group}, "
-            f"$k = j+{crop_year_gap} = i+{crop_year_gap+delta_t_year_gap}$"
+            f"${year_k} = {year_j}+{crop_year_gap} = {year_i}+{crop_year_gap+delta_t_year_gap}$"
         ),
         fontsize="xx-large",
     )

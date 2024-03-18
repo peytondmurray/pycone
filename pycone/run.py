@@ -1,5 +1,4 @@
 import pathlib
-import re
 
 import pandas as pd
 from rich.console import Console
@@ -125,13 +124,12 @@ def compute_correlation(
         corr = util.read_data(correlation_path)
     else:
         corr = analysis.correlation(mean_t=mean_t, cones=cones, groups=groups)
-
         util.write_data(corr, correlation_path)
 
     return corr
 
 
-def run_analysis():
+def run_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT):
     """Run the pycone analysis for each site separately.
 
     This function will load the weather and cone data and do some preprocessing. The resulting
@@ -146,13 +144,17 @@ def run_analysis():
     start date and duration of the intervals on every pair of years. This data is so large that it
     is impractical to write to disk, so at this point we just calculate the correlation between ΔT
     and the number of cones for the site.
+
+    Parameters
+    ----------
+    kind : util.CorrelationType
+        Correlation type to use
     """
     cones = load_cones()
     weather = load_weather()
     mean_t = compute_mean_t(weather)
 
     groups = []
-    pine_sites, other_sites = util.separate_pine_sites(mean_t["site"].unique())
     # Build the data structure which controls how correlations are computed
     # Pines have a 3 year reproductive cycle, so treat separately
     for site in mean_t["site"].unique():
@@ -160,13 +162,17 @@ def run_analysis():
             util.Group(
                 name=util.code_to_site(site),
                 sites=[site],
-                crop_year_gap=2 if site in pine_sites else 1,
+                crop_year_gap=util.get_crop_year_gap(site),
                 delta_t_year_gap=1,
+                kind=kind,
             )
         )
 
     correlation = compute_correlation(
-        mean_t=mean_t, cones=cones, groups=groups, output="correlation.csv"
+        mean_t=mean_t,
+        cones=cones,
+        groups=groups,
+        output=f"correlation_{kind.value}.csv",
     )
 
     output.plot_correlation_duration_grids(
@@ -175,53 +181,54 @@ def run_analysis():
         nrows=18,
         ncols=12,
         figsize=(40, 60),
-        extent=[50, 280, 50, 280],
-        filename="group_{}_correlations.svg",
+        extent=(50, 280, 50, 280),
+        filename="group_{}_correlations" + f"_{kind.value}.svg",
     )
 
 
-def run_batch_analysis():
-    """Run the pycone analysis, grouping the sites with the same species together."""
+def run_batch_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT):
+    """Run the pycone analysis, grouping the sites with the same species together.
+
+    Parameters
+    ----------
+    kind : util.CorrelationType
+        Correlation type to use
+    """
     cones = load_cones()
     weather = load_weather()
     mean_t = compute_mean_t(weather)
 
-    groups = {}
+    groups: dict[str, util.Group] = {}
     for site, code in util.SITE_CODES.items():
         # Extract the 4-letter species name from the site code,
         # grouping all sites for the same species together
-        matched = re.match(r"\d+(?P<abbrev>\w+)_[A-Z]+", site)
-        if not matched:
-            raise ValueError("No match found for site code.")
-
-        species = matched.group("abbrev")
+        species = util.get_species(site)
         if species in groups:
             groups[species].sites.append(code)
         else:
             groups[species] = util.Group(
                 name=species,
                 sites=[code],
-                crop_year_gap=2
-                if util.string_contains(species, ["PIMO", "PILA"])
-                else 1,
+                crop_year_gap=util.get_crop_year_gap(site),
                 delta_t_year_gap=1,
+                kind=kind,
             )
 
     correlation = compute_correlation(
         mean_t=mean_t,
         cones=cones,
-        groups=groups.values(),
-        output="correlation_grouped.csv",
+        groups=list(groups.values()),
+        output=f"correlation_grouped_{kind.value}.csv",
     )
 
     output.plot_correlation_duration_grids(
         correlation,
-        groups=groups.values(),
+        groups=list(groups.values()),
         nrows=18,
         ncols=12,
         figsize=(40, 60),
-        extent=[50, 280, 50, 280],
-        filename="sites_{}_correlations_grouped.svg",
+        extent=(50, 280, 50, 280),
+        filename="group_{}_correlations_grouped" + f"_{kind.value}.svg",
     )
 
 
@@ -231,3 +238,14 @@ def show_fft():
     weather = load_weather()
 
     output.plot_fequency(weather, cones)
+
+
+def run_all_correlation_kinds():
+    """Run all types of correlations."""
+    for kind in [
+        util.CorrelationType.DEFAULT,
+        util.CorrelationType.EXP_DT,
+        util.CorrelationType.EXP_DT_OVER_N,
+    ]:
+        run_analysis(kind=kind)
+        run_batch_analysis(kind=kind)

@@ -1,7 +1,9 @@
+from collections import defaultdict
+
 import numpy as np
 import pandas as pd
 import pytest
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_array_equal, assert_equal
 
 import pycone
 
@@ -26,7 +28,12 @@ def test_compute_correlation_site_duration(cones, delta_t, correlation):
     )
 
     corr = pycone.analysis.compute_correlation_site_duration(
-        data, site=1, duration=10, task_id=-1, worker_status=None
+        data,
+        site=1,
+        duration=10,
+        task_id=-1,
+        worker_status=None,
+        kind=pycone.util.CorrelationType.DEFAULT,
     )
     assert not corr.empty
     assert corr.iloc[0]["correlation"] == correlation
@@ -49,7 +56,12 @@ def test_compute_correlation_site_duration_random():
     )
 
     corr = pycone.analysis.compute_correlation_site_duration(
-        data, site=1, duration=10, task_id=-1, worker_status=None
+        data,
+        site=1,
+        duration=10,
+        task_id=-1,
+        worker_status=None,
+        kind=pycone.util.CorrelationType.DEFAULT,
     )
     assert not corr.empty
     assert np.isclose(corr.iloc[0]["correlation"], np.corrcoef(delta_t, cones)[0, 1])
@@ -58,43 +70,68 @@ def test_compute_correlation_site_duration_random():
 def test_compute_correlation():
     """Test that the multiprocess correlation is computed correctly; output is compared to numpy."""
     site = np.repeat([1, 2], 10)
-    year1 = np.tile(np.arange(1989, 1999), 2)
+    year = np.tile(np.arange(1989, 1999), 2)
+    start = np.full_like(site, 3)
+    duration = np.full_like(site, 3)
     rng = np.random.default_rng(123)
     cones = pd.DataFrame(
         {
             "site": site,
-            "year": year1 + 2,
+            "year": year,
             "cones": rng.integers(0, 10, size=20),
         }
     )
-    delta_t = pd.DataFrame(
+    mean_t = pd.DataFrame(
         {
             "site": site,
-            "duration": np.full(20, 20),
-            "start1": np.full_like(site, 100),
-            "start2": np.full_like(site, 120),
-            "year1": year1,
-            "year2": year1 + 1,
-            "delta_t": rng.random(size=20),
+            "year": year,
+            "mean_t": rng.random(size=20),
+            "start": start,
+            "duration": duration,
         }
     )
-    corr = pycone.analysis.compute_correlation(
-        delta_t,
+    groups = [
+        pycone.util.Group(name="a", sites=[1]),
+        pycone.util.Group(name="b", sites=[2]),
+    ]
+    group_sites = {group.name: group.sites for group in groups}
+
+    corr = pycone.analysis.correlation(
+        mean_t,
         cones,
+        groups,
     )
     assert not corr.empty
+    assert len(corr) == 2
+    assert_equal(corr["group"].values, ["a", "b"])
 
-    delta_t["crop_year"] = year1 + 2
+    # Manually compute the correlation coefficient using numpy, then compare to the correlation
+    # computed by pycone.
+    results = defaultdict(list)
+    for site, df in mean_t.groupby("site"):
+        temperature = df["mean_t"].to_numpy()
+        year = df["year"].to_numpy()
+        dt = temperature[1:] - temperature[:-1]
+        results["delta_t"].append(dt)
+        results["year1"].append(year[:-1])
+        results["year2"].append(year[1:])
+        results["start1"].append(np.full(dt.shape, 3))
+        results["start2"].append(np.full(dt.shape, 3))
+        results["site"].append(np.full(dt.shape, site))
+
+    delta_t = pd.DataFrame({key: np.concatenate(arrs) for key, arrs in results.items()})
+    delta_t["crop_year"] = delta_t["year2"] + 1
+
     merged = cones[["site", "year", "cones"]].merge(
         delta_t, how="inner", left_on=["site", "year"], right_on=["site", "crop_year"]
     )
 
-    for site_value, df in corr.groupby("site"):
+    for group, df in corr.groupby("group"):
         assert np.isclose(
             df.iloc[0]["correlation"],
             np.corrcoef(
-                merged.loc[merged["site"] == site_value]["cones"].values,
-                merged.loc[merged["site"] == site_value]["delta_t"].values,
+                merged.loc[merged["site"].isin(group_sites[group])]["cones"].values,
+                merged.loc[merged["site"].isin(group_sites[group])]["delta_t"].values,
             )[0, 1],
         )
 
