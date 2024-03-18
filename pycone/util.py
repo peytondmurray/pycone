@@ -1,13 +1,33 @@
 import multiprocessing as mp
 import pathlib
+import re
 from collections.abc import Iterable
+from enum import Enum
 from multiprocessing.pool import AsyncResult
 from types import TracebackType
-from typing import Any
+from typing import Any, overload
 
 import numpy as np
 import pandas as pd
 import rich.progress as rp
+
+
+class CorrelationType(Enum):
+    """Correlation calculation types.
+
+    Represents correlations between
+
+        DEFAULT: n and ΔT
+        EXP_DT: n and exp(ΔT)
+        EXP_DT_OVER_N: n and exp(ΔT/n)
+
+    where n is the cone count and ΔT is the temperature difference.
+    """
+
+    DEFAULT = "dt_vs_n"
+    EXP_DT = "exp_dt_vs_n"
+    EXP_DT_OVER_N = "exp_dt_over_n_vs_n"
+
 
 # Set to be as small as possible to save memory and increase performance
 DTYPES = {
@@ -73,6 +93,51 @@ SITE_CODES = {
 }
 
 SITE_CODES_INVERSE = {val: key for key, val in SITE_CODES.items()}
+
+
+def get_species(site: str | int | np.integer) -> str:
+    """Get the species given the site.
+
+    Parameters
+    ----------
+    site : str | int
+        Site or site code
+
+    Returns
+    -------
+    str
+        Species name extracted from the site name
+    """
+    if isinstance(site, int | np.integer):
+        site_str = code_to_site(site)
+    else:
+        site_str = site
+
+    matched = re.match(r"\d+(?P<abbrev>\w+)_[A-Z]+", site_str)
+    if not matched:
+        raise ValueError("No match found for site code.")
+
+    return matched.group("abbrev")
+
+
+def get_crop_year_gap(site: str | int) -> int:
+    """Get the crop year gap for the given site.
+
+    Parameters
+    ----------
+    site : str | int
+        Site or site code
+
+    Returns
+    -------
+    int
+        Crop year gap for the given site. Most species have 1 year between when the
+        cones are pollinated and when they are mature, but PIMO and PILA have 2.
+    """
+    species = get_species(site)
+    if string_contains(species, ["PIMO", "PILA"]):
+        return 2
+    return 1
 
 
 def write_data(df: pd.DataFrame, path: str | pathlib.Path):
@@ -234,7 +299,17 @@ class ParallelExecutor:
         self.results.append(self.pool.apply_async(*args, **kwargs))
 
 
-def site_to_code(site: str | Iterable[str]) -> int | list[int]:
+@overload
+def site_to_code(site: str) -> int:
+    ...
+
+
+@overload
+def site_to_code(site: list[str]) -> list[int]:
+    ...
+
+
+def site_to_code(site: str | list[str]) -> int | list[int]:
     """Convert a string site name to an integer code for performance.
 
     Parameters
@@ -252,12 +327,22 @@ def site_to_code(site: str | Iterable[str]) -> int | list[int]:
     return [SITE_CODES[s] for s in site]
 
 
-def code_to_site(site: int | Iterable[int]) -> str | list[str]:
+@overload
+def code_to_site(site: int) -> str:
+    ...
+
+
+@overload
+def code_to_site(site: list[int]) -> list[str]:
+    ...
+
+
+def code_to_site(site: int | list[int]) -> str | list[str]:
     """Map the site code to the corresponding site name.
 
     Parameters
     ----------
-    site : int
+    site : int | Iterable[int]
         Unique site integer to convert back into a site name
 
     Returns
@@ -265,7 +350,7 @@ def code_to_site(site: int | Iterable[int]) -> str | list[str]:
     str | list[str]
         Original site name corresponding to the site code
     """
-    if isinstance(site, int):
+    if isinstance(site, int | np.integer):
         return SITE_CODES_INVERSE[site]
     return [SITE_CODES_INVERSE[s] for s in site]
 
@@ -428,4 +513,4 @@ class Group:
         return self.name
 
     def __repr__(self):
-        return vars(self)
+        return str(vars(self))

@@ -326,7 +326,9 @@ def calculate_mean_t_site_year(
 
 
 def correlation(
-    mean_t: pd.DataFrame, cones: pd.DataFrame, groups: list[util.Group]
+    mean_t: pd.DataFrame,
+    cones: pd.DataFrame,
+    groups: list[util.Group],
 ) -> pd.DataFrame:
     """Compute the correlation between ΔT and the number of cones from mean temperature.
 
@@ -341,6 +343,8 @@ def correlation(
         Cone crop data
     groups : dict[str, util.Group]
         Groups for which the data is to be grouped by. See util.Group documentation for details
+    kind : util.CorrelationType
+        Correlation to compute
 
     Returns
     -------
@@ -358,7 +362,7 @@ def correlation(
             mean_t_df = mean_t.loc[mean_t["site"].isin(group.sites)]
             cones_df = cones.loc[cones["site"].isin(group.sites)]
             task_id = pe.add_task(
-                f"Group {group}:",
+                f"Group {group.name}:",
                 visible=False,
             )
             pe.apply_async(
@@ -378,12 +382,13 @@ def correlation(
 def correlation_group(
     mean_t: pd.DataFrame,
     cones: pd.DataFrame,
-    group: str | None = None,
+    group: util.Group | None = None,
     durations: int | Iterable | None = None,
     task_id: int | None = None,
     worker_status: dict[int, Any] | None = None,
     delta_t_year_gap: int = 1,
     crop_year_gap: int = 1,
+    kind: util.CorrelationType = util.CorrelationType.DEFAULT,
 ) -> pd.DataFrame:
     """Calculate the cone crop correlation from mean temperature data per-site for the given group.
 
@@ -393,9 +398,10 @@ def correlation_group(
         Mean temperature data for the given site
     cones : pd.DataFrame
         Cone data for the given site
-    group : str | None
-        Name of the group for which the correlation is being calculated. This is just a label added
-        as a column to the output
+    group : util.Group | None
+        Object which contains configuration details about the correlation calculation. Contains
+        the name of the group for which the correlation is being calculated. This is just a label
+        added as a column to the output
     durations : int | Iterable | None
         Duration(s) to calculate data for; if None, all possible durations are calculated
     task_id : int | None
@@ -410,6 +416,8 @@ def correlation_group(
     crop_year_gap : int
         Gap between the second year used for calculating ΔT and the year in which the cone crop is
         correlated
+    kind: util.CorrelationType
+        Correlation type to use
 
     Returns
     -------
@@ -462,9 +470,9 @@ def correlation_group(
             right_on=["site", "crop_year"],
         )
 
-        corr = compute_correlation_site_duration(dt_cone_df, duration)
+        corr = compute_correlation_site_duration(dt_cone_df, duration, kind)
         if group is not None:
-            corr["group"] = group
+            corr["group"] = group.name
         results.append(corr)
 
         if is_subprocess:
@@ -476,11 +484,13 @@ def correlation_group(
 def compute_correlation_site_duration(
     data: pd.DataFrame,
     duration: int,
+    kind: util.CorrelationType,
     site: int | None = None,
     task_id: int | None = None,
     worker_status: dict[int, Any] | None = None,
     dt_col: str = "delta_t",
     cones_col: str = "cones",
+    method: str = "pearson",
 ) -> pd.DataFrame:
     """Compute the correlation for a given site and duration.
 
@@ -496,6 +506,8 @@ def compute_correlation_site_duration(
 
     duration : int
         Duration of the intervals used to calculate the mean temperature (and therefore delta-T)
+    kind : util.CorrelationType
+        Correlation to compute
     site : int | None
         Integer corresponding to the site from which the data was taken. Set to None to avoid
         writing a `site` column to the output
@@ -509,6 +521,8 @@ def compute_correlation_site_duration(
         Name of the column containing delta-T data
     cones_col : str
         Name of the column containing cone count data
+    method : str
+        Method kwarg to pass pandas.DataFrame.corr
 
     Returns
     -------
@@ -532,9 +546,32 @@ def compute_correlation_site_duration(
     for i, ((start1, start2), df) in enumerate(gb, start=1):
         results["start1"].append(start1)
         results["start2"].append(start2)
-        results["correlation"].append(
-            df[[dt_col, cones_col]].corr(method="pearson")[dt_col][cones_col]
-        )
+
+        # Compute the correlation depending on the requested correlation type.
+        # Here we use placeholder column names.
+        if kind == util.CorrelationType.DEFAULT:
+            corr_inputs = pd.DataFrame(
+                {
+                    "a": df[cones_col],
+                    "b": df[dt_col],
+                }
+            )
+        elif kind == util.CorrelationType.EXP_DT:
+            corr_inputs = pd.DataFrame(
+                {
+                    "a": df[cones_col],
+                    "b": np.exp(df[dt_col]),
+                }
+            )
+        elif kind == util.CorrelationType.EXP_DT_OVER_N:
+            corr_inputs = pd.DataFrame(
+                {
+                    "a": df[cones_col],
+                    "b": np.exp(df[dt_col] / df[cones_col]),
+                }
+            )
+
+        results["correlation"].append(corr_inputs.corr(method=method)["a"]["b"])
 
         if is_subprocess:
             worker_status[task_id] = {"items_completed": i, "total": gb.ngroups}  # type: ignore
