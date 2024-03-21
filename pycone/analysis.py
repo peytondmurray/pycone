@@ -356,6 +356,7 @@ def correlation(
             correlation
             site
             duration
+            group
     """
     with util.ParallelExecutor("[green]Calculating correlation:") as pe:
         for group in groups:
@@ -389,6 +390,7 @@ def correlation_group(
     delta_t_year_gap: int = 1,
     crop_year_gap: int = 1,
     kind: util.CorrelationType = util.CorrelationType.DEFAULT,
+    method: str = "pearson",
 ) -> pd.DataFrame:
     """Calculate the cone crop correlation from mean temperature data per-site for the given group.
 
@@ -418,6 +420,8 @@ def correlation_group(
         correlated
     kind: util.CorrelationType
         Correlation type to use
+    method : str
+        Method kwarg to pass pandas.DataFrame.corr
 
     Returns
     -------
@@ -470,7 +474,9 @@ def correlation_group(
             right_on=["site", "crop_year"],
         )
 
-        corr = compute_correlation_site_duration(dt_cone_df, duration, kind)
+        corr = compute_correlation_site_duration(
+            dt_cone_df, duration, kind, method=method
+        )
         if group is not None:
             corr["group"] = group.name
         results.append(corr)

@@ -129,7 +129,10 @@ def compute_correlation(
     return corr
 
 
-def run_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT):
+def run_analysis(
+    kind: util.CorrelationType = util.CorrelationType.DEFAULT,
+    method: str = "pearson",
+):
     """Run the pycone analysis for each site separately.
 
     This function will load the weather and cone data and do some preprocessing. The resulting
@@ -149,6 +152,8 @@ def run_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT):
     ----------
     kind : util.CorrelationType
         Correlation type to use
+    method : str
+        Method kwarg to pass pandas.DataFrame.corr
     """
     cones = load_cones()
     weather = load_weather()
@@ -172,7 +177,7 @@ def run_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT):
         mean_t=mean_t,
         cones=cones,
         groups=groups,
-        output=f"correlation_{kind.value}.csv",
+        output=f"correlation_{method}_{kind.value}.csv",
     )
 
     output.plot_correlation_duration_grids(
@@ -182,17 +187,22 @@ def run_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT):
         ncols=12,
         figsize=(40, 60),
         extent=(50, 280, 50, 280),
-        filename="group_{}_correlations" + f"_{kind.value}.svg",
+        filename="group_{}_correlations" + f"_{method}_{kind.value}.svg",
     )
 
 
-def run_batch_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT):
+def run_batch_analysis(
+    kind: util.CorrelationType = util.CorrelationType.DEFAULT,
+    method: str = "pearson",
+):
     """Run the pycone analysis, grouping the sites with the same species together.
 
     Parameters
     ----------
     kind : util.CorrelationType
         Correlation type to use
+    method : str
+        Method kwarg to pass pandas.DataFrame.corr
     """
     cones = load_cones()
     weather = load_weather()
@@ -212,13 +222,14 @@ def run_batch_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT
                 crop_year_gap=util.get_crop_year_gap(site),
                 delta_t_year_gap=1,
                 kind=kind,
+                method=method,
             )
 
     correlation = compute_correlation(
         mean_t=mean_t,
         cones=cones,
         groups=list(groups.values()),
-        output=f"correlation_grouped_{kind.value}.csv",
+        output=f"correlation_{method}_grouped_{kind.value}.csv",
     )
 
     output.plot_correlation_duration_grids(
@@ -228,7 +239,7 @@ def run_batch_analysis(kind: util.CorrelationType = util.CorrelationType.DEFAULT
         ncols=12,
         figsize=(40, 60),
         extent=(50, 280, 50, 280),
-        filename="group_{}_correlations_grouped" + f"_{kind.value}.svg",
+        filename="group_{}_correlations_grouped" + f"_{method}_{kind.value}.svg",
     )
 
 
@@ -247,5 +258,6 @@ def run_all_correlation_kinds():
         util.CorrelationType.EXP_DT,
         util.CorrelationType.EXP_DT_OVER_N,
     ]:
-        run_analysis(kind=kind)
-        run_batch_analysis(kind=kind)
+        for method in ["pearson", "spearman"]:
+            run_analysis(kind=kind, method=method)
+            run_batch_analysis(kind=kind, method=method)
