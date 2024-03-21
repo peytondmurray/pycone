@@ -105,6 +105,7 @@ def plot_correlation_duration_grid(
     delta_t_year_gap: int = 1,
     crop_year_gap: int = 1,
     kind: util.CorrelationType | None = None,
+    method: str = "pearson",
 ) -> plt.Figure | None:
     """Generate a single correlation/duration plot for all durations in the given dataset.
 
@@ -146,6 +147,8 @@ def plot_correlation_duration_grid(
         correlated
     kind : util.CorrelationType
         Correlation type to use
+    method : str
+        Method kwarg to pass pandas.DataFrame.corr
 
     Returns
     -------
@@ -218,10 +221,10 @@ def plot_correlation_duration_grid(
             labels=["Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"],
         )
 
-        axis.axvline(x=91, color="k")
-        axis.axvline(x=121, color="k")
-        axis.axvline(x=152, color="k")
-        axis.axvline(x=213, color="k")
+        axis.axhline(y=91, color="k")
+        axis.axhline(y=121, color="k")
+        axis.axhline(y=152, color="k")
+        axis.axhline(y=213, color="k")
 
         if ax_row == nrows - 1 and ax_col == ncols // 2:
             axis.set_xlabel(
@@ -244,11 +247,11 @@ def plot_correlation_duration_grid(
     cax = fig.add_axes([0.85, 0.03, 0.1, 0.005])
 
     if kind == util.CorrelationType.DEFAULT:
-        correlation_text = r"$\rho_{\Delta T N}$"
+        correlation_text = f"{method}" + r"$\rho_{\Delta T N}$"
     elif kind == util.CorrelationType.EXP_DT:
-        correlation_text = r"$\rho_{exp(\Delta T) N}$"
+        correlation_text = f"{method}" + r"$\rho_{exp(\Delta T) N}$"
     elif kind == util.CorrelationType.EXP_DT_OVER_N:
-        correlation_text = r"$\rho_{exp(\Delta T/N) N}$"
+        correlation_text = f"{method}" + r"$\rho_{exp(\Delta T/N) N}$"
     else:
         correlation_text = ""
 
