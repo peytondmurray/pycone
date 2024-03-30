@@ -29,6 +29,7 @@ py.install_sources(
     'pycone/preprocess.py',
     'pycone/output.py',
     'pycone/util.py',
+    'pycone/stats.py',
   ],
   subdir: 'pycone',
   pure: false

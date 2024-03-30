@@ -1,6 +1,12 @@
+import numpy as np
 import pymc as pm
 
 model = pm.Model()
+
+
+def log_jeffreys(x: float) -> float:
+    return -np.log(x)
+
 
 with model:
     # Define priors for the model
@@ -10,6 +16,6 @@ with model:
     # with a coefficient that can only be positive.
     # β: Coefficient of the term corresponding to the previous cone crop. Must exist in range
     # [0, 1], otherwise the term doesn't make sense in terms of energy conservation.
-    sigma_n = pm.HalfNormal("sigma_n", sigma=1)
     alpha = pm.Normal("alpha", sigma=10)
-    beta = pm.Uniform(0, 1, value=0.5)
+    beta = pm.Uniform("beta", 0, 1, value=0.5)
+    sigma_n = pm.CustomDist("sigma_n", logp=log_jeffreys)
