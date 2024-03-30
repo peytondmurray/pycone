@@ -1,3 +1,4 @@
+import datetime
 import multiprocessing as mp
 import pathlib
 import re
@@ -516,35 +517,17 @@ class Group:
         return str(vars(self))
 
 
-def get_days_since_start(
-    data: pd.DataFrame,
-    year_col: str = "start",
-    doy_col: str = "day_of_year",
-) -> pd.DataFrame:
-    """Get the number of days since the first datapoint.
+def to_day_since_start(data: pd.DataFrame) -> pd.DataFrame:
+    first_data = data.loc[
+        (data["year"] == data["year"].min()) & (data["start"] == data["start"].min())
+    ]
 
-    Parameters
-    ----------
-    data : pd.DataFrame
-        DataFrame containing 'year' and 'start' columns
-    year_col : str
-        Year column
-    doy_col : str
-        Ordinal day of year column
+    first_date = datetime.date(data["year"], 1, 1) + datetime.timedelta(
+        days=first_data["start"] - 1
+    )
 
-    Returns
-    -------
-    pd.DataFrame
-        The input data but with a 'days_since_start' column appended
-    """
-    # Combine the year, month, and day into an integer that will be parsed as
-    # a string.
-    year_str = data[year_col].astype(int) * 10000
-    month_str = np.ones(len(data), dtype=int) * 100
-    day_str = np.ones(len(data), dtype=int)
+    data["days_since_start"] = (
+        datetime.date(data["year"], 1, 1) + datetime.timedelta(days=data["start"])
+    ) - first_date
 
-    dates = pd.to_datetime(
-        year_str + month_str + day_str, format="%Y%m%d"
-    ) + pd.to_timedelta(data[doy_col] - 1, unit="day")
-
-    return (dates - dates.min()).dt.days
+    data["days_since_start"] = pd.to_dateime
