@@ -517,16 +517,49 @@ class Group:
         return str(vars(self))
 
 
-def year_day_to_ordinal(row: pd.Series, origin: pd.Timestamp) -> pd.Timestamp:
-    breakpoint()
-    return (
-        pd.Timestamp(year=row["year"], month=1, day=1)
-        + pd.Timedelta(days=row["start"] - 1)
-        - origin
-    )
+def year_day_to_ordinal(data: pd.DataFrame, origin: pd.Timestamp) -> pd.Timestamp:
+    """Compute the number of days since the origin using the date info in `data`.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame containing 'year' and 'start' columns, which correspond to a
+        timestamp; 'start' is the number of days since the start of the year.
+    origin : pd.Timestamp
+        Reference date to use
+
+    Returns
+    -------
+    pd.Series
+        Series containing the integer number of days since the origin for each
+        timestamp
+    """
+    # Combine the year, month, and day into an integer that will be parsed as
+    # a string.
+    year_str = data['year'].astype(int)*10000
+    month_str = np.ones(len(data), dtype=int)*100
+    day_str = np.ones(len(data), dtype=int)
+
+    dates = pd.to_datetime(
+        year_str + month_str + day_str, format="%Y%m%d"
+    ) + pd.to_timedelta(data['start'] - 1, unit='day')
+
+    return (dates - origin).dt.days
 
 
-def to_day_since_start(data: pd.DataFrame) -> pd.DataFrame:
+def add_days_since_start(data: pd.DataFrame) -> pd.DataFrame:
+    """Add a new column to the data containing the number of days since the first datapoint.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame containing 'year' and 'start' columns
+
+    Returns
+    -------
+    pd.DataFrame
+        The input data but with a 'days_since_start' column appended
+    """
     first_year = data.loc[data["year"] == data["year"].min()]
     first_data = first_year.loc[
         (first_year["start"] == first_year["start"].min())
@@ -537,10 +570,5 @@ def to_day_since_start(data: pd.DataFrame) -> pd.DataFrame:
 
     first_date = pd.Timestamp(year=y0, month=1, day=1) + pd.Timedelta(days=d0 - 1)
 
-    data["days_since_start"] = data.apply(
-        lambda row: year_day_to_ordinal(row, first_date), axis="row"
-    )
-
-    breakpoint()
-
+    data["days_since_start"] = year_day_to_ordinal(data, first_date)
     return data
