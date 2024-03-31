@@ -517,17 +517,30 @@ class Group:
         return str(vars(self))
 
 
-def to_day_since_start(data: pd.DataFrame) -> pd.DataFrame:
-    first_data = data.loc[
-        (data["year"] == data["year"].min()) & (data["start"] == data["start"].min())
-    ]
-
-    first_date = datetime.date(data["year"], 1, 1) + datetime.timedelta(
-        days=first_data["start"] - 1
+def year_day_to_ordinal(row: pd.Series, origin: pd.Timestamp) -> pd.Timestamp:
+    breakpoint()
+    return (
+        pd.Timestamp(year=row["year"], month=1, day=1)
+        + pd.Timedelta(days=row["start"] - 1)
+        - origin
     )
 
-    data["days_since_start"] = (
-        datetime.date(data["year"], 1, 1) + datetime.timedelta(days=data["start"])
-    ) - first_date
 
-    data["days_since_start"] = pd.to_dateime
+def to_day_since_start(data: pd.DataFrame) -> pd.DataFrame:
+    first_year = data.loc[data["year"] == data["year"].min()]
+    first_data = first_year.loc[
+        (first_year["start"] == first_year["start"].min())
+    ].iloc[[0]]
+
+    y0 = first_data["year"].iloc[0]
+    d0 = first_data["start"].iloc[0]
+
+    first_date = pd.Timestamp(year=y0, month=1, day=1) + pd.Timedelta(days=d0 - 1)
+
+    data["days_since_start"] = data.apply(
+        lambda row: year_day_to_ordinal(row, first_date), axis="row"
+    )
+
+    breakpoint()
+
+    return data

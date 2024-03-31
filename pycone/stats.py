@@ -13,11 +13,9 @@ import pycone
 # n(t) = ɑΔT(t - τ_0) + βΔT(t - τ_1) - ɣn(t - τ_2)
 
 
-observed = pycone.util.read_data('mean_t.csv')
+observed = pycone.util.to_day_since_start(pycone.util.read_data("mean_t.csv"))
 
 # Convert year+ordinal day of year to just day since the start of the dataset
-
-
 
 
 with pm.Model() as model:
@@ -34,4 +32,4 @@ with pm.Model() as model:
     sigma_delta_t = pm.HalfCauchy("sigma_delta_t", beta=100)
     delta_t_bar = pm.Normal("delta_t_bar", mu=50, sigma=30)
 
-    likelihood = pm.Normal("n", mu=alpha*)
+    likelihood = pm.Normal("n", mu=alpha)
