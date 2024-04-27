@@ -11,42 +11,47 @@ import pycone
 # harder to think about.
 
 # Model 2: Continuous times
-#\ n(t) = ɑT(t - τ_0) + βT(t - τ_2) - ɣn(t - τ_3)
+# \ n(t) = ɑT(t - τ_0) + βT(t - τ_2) - ɣn(t - τ_3)
 
 # Model 2: Discrete times
-#\ n = ɑT_i + βT_j - ɣn_k
+# \ n = ɑT_i + βT_j - ɣn_k
 #    = ɑT_k-2 + βT_k-1 - ɣn_k       (for pine species)
 
 # Convert year+ordinal day of year to just day since the start of the dataset
 mean_t = pycone.util.read_data("mean_t.csv")
-cones = pycone.util.read_data('cones.csv')
+cones = pycone.util.read_data("cones.csv")
 
 # Note that we combine years differently than in analysis.py here (we are not using a crop year).
-observed = pycone.util.add_days_since_start(
-    mean_t.merge(cones, on="year")
-)
+observed = pycone.util.add_days_since_start(mean_t.merge(cones, on="year"))
 
 site = 1
-years = sorted(site_data['year'].unique())
+years = sorted(mean_t["year"].unique())
 
-site_data = observed.loc[observed['site'] == site]
-year_i = site_data.loc[site_data['year'].isin(years[:-2])]
-year_j = site_data.loc[site_data['year'].isin(years[1:-1])]
-year_k = site_data.loc[site_data['year'].isin(years[2:])]
-
-
+site_data = observed.loc[observed["site"] == site]
+year_h = site_data.loc[site_data["year"].isin(years[:-3])]
+year_i = site_data.loc[site_data["year"].isin(years[1:-2])]
+year_j = site_data.loc[site_data["year"].isin(years[2:-1])]
+year_k = site_data.loc[site_data["year"].isin(years[3:])]
 
 with pm.Model() as model:
     # Define priors for the model
     # σ_n: Statistical variation in the number of cones
-    # α: Coefficient for the T_i-1 term, the differentiation year
-    # β: Coefficient for the T_i-2 term, the differentiate
+    # α: Coefficient for the T_i-1 term, the pollination year
+    # β: Coefficient for the T_i-2 term, the priming year
     # ɣ: Coefficient of the term corresponding to the previous cone crop. Must exist in range
     # [0, 1], otherwise the term doesn't make sense in terms of energy conservation.
     alpha = pm.Uniform("alpha", lower=-1000, upper=1000)
-    beta = pm.Uniform("beta", lower=0, upper=1)
+    beta = pm.Uniform("beta", lower=-1000, upper=1000)
+    gamma = pm.Uniform("gamma", lower=0, upper=1)
     sigma_n = pm.HalfCauchy("sigma_n", beta=10)
     sigma_t = pm.HalfCauchy("sigma_t", beta=100)
     t_avg = pm.Normal("t_avg", mu=50, sigma=30)
 
-    likelihood = pm.Normal("n", mu=alpha*observed[])
+    likelihood = pm.Normal(
+        "p_cones",
+        mu=alpha * year_i["mean_t"] + beta * year_j["mean_t"] - gamma * year_h["cones"],
+        sigma=sigma_n,
+        observed=year_k["cones"],
+    ) * pm.Normal("p_temp", mu=t_avg, sigma=sigma_t, observed=year_k["mean_t"])
+
+model.to_graphviz()
