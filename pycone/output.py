@@ -106,6 +106,7 @@ def plot_correlation_duration_grid(
     crop_year_gap: int = 1,
     kind: util.CorrelationType | None = None,
     method: str = "pearson",
+    **_kwargs,
 ) -> plt.Figure | None:
     """Generate a single correlation/duration plot for all durations in the given dataset.
 
@@ -149,6 +150,8 @@ def plot_correlation_duration_grid(
         Correlation type to use
     method : str
         Method kwarg to pass pandas.DataFrame.corr
+    **_kwargs
+        Other group correlation kwargs; not used anywhere
 
     Returns
     -------

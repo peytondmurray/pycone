@@ -132,6 +132,7 @@ def compute_correlation(
 def run_analysis(
     kind: util.CorrelationType = util.CorrelationType.DEFAULT,
     method: str = "pearson",
+    cone_number_summand: float = 0,
 ):
     """Run the pycone analysis for each site separately.
 
@@ -154,6 +155,9 @@ def run_analysis(
         Correlation type to use
     method : str
         Method kwarg to pass pandas.DataFrame.corr
+    cone_number_summand : float
+        Number to be added to all cones. This prevents the infinities that arise when exp(ΔT/n) is
+        calculated when n = 0.
     """
     cones = load_cones()
     weather = load_weather()
@@ -170,6 +174,7 @@ def run_analysis(
                 crop_year_gap=util.get_crop_year_gap(site),
                 delta_t_year_gap=1,
                 kind=kind,
+                cone_number_summand=cone_number_summand,
             )
         )
 
@@ -261,3 +266,13 @@ def run_all_correlation_kinds():
         for method in ["pearson", "spearman"]:
             run_analysis(kind=kind, method=method)
             run_batch_analysis(kind=kind, method=method)
+
+
+def run_exp_dt_over_n_correlation_with_offset():
+    """Run both correlations, but add 0.5 to all cone counts before the correlation."""
+    for method in ["pearson", "spearman"]:
+        run_analysis(
+            kind=util.CorrelationType.EXP_DT_OVER_N,
+            method=method,
+            cone_number_summand=0.5,
+        )

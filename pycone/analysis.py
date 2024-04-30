@@ -95,8 +95,7 @@ def delta_t(
         Dictionary where worker status information can be written. This is a multiprocessing-safe
         object shared across all workers.
     year_gap : int
-        Gap [years] between year1 and year2. Certain tree species have 3 year reproductive cycles,
-        but most have 2 year cycles (1 year gap).
+        Gap [years] between year1 and year2.
 
     Returns
     -------
@@ -128,9 +127,7 @@ def delta_t(
         worker_status[task_id] = {"items_completed": 0, "total": len(durations)}  # type: ignore
 
     results = []
-    for i, (duration, duration_df) in enumerate(
-        zip(durations, dfs, strict=True), start=1
-    ):
+    for i, (duration, duration_df) in enumerate(zip(durations, dfs, strict=True), start=1):
         result = calculate_delta_t_site_duration_fast(
             duration_df,
             years,
@@ -308,9 +305,7 @@ def calculate_mean_t_site_year(
                     # use the temperature of the single day in this case.
                     mean_temp = temperature_interval[0]
                 else:
-                    mean_temp = (
-                        np.trapz(y=temperature_interval, x=doy_interval) / duration
-                    )
+                    mean_temp = np.trapz(y=temperature_interval, x=doy_interval) / duration
 
             result["mean_t"].append(mean_temp)
             result["start"].append(start)
@@ -391,6 +386,7 @@ def correlation_group(
     crop_year_gap: int = 1,
     kind: util.CorrelationType = util.CorrelationType.DEFAULT,
     method: str = "pearson",
+    cone_number_summand: float = 0,
 ) -> pd.DataFrame:
     """Calculate the cone crop correlation from mean temperature data per-site for the given group.
 
@@ -422,6 +418,9 @@ def correlation_group(
         Correlation type to use
     method : str
         Method kwarg to pass pandas.DataFrame.corr
+    cone_number_summand : float
+        Number to be added to all cones. This prevents the infinities that arise when exp(ΔT/n) is
+        calculated when n = 0.
 
     Returns
     -------
@@ -450,9 +449,7 @@ def correlation_group(
         worker_status[task_id] = {"items_completed": 0, "total": len(durations)}  # type: ignore
 
     results = []
-    for i, (duration, duration_df) in enumerate(
-        zip(durations, dfs, strict=True), start=1
-    ):
+    for i, (duration, duration_df) in enumerate(zip(durations, dfs, strict=True), start=1):
         # Compute delta_t for each site separately. Then combine them together to compute the
         # correlation.
         site_data = []
@@ -475,7 +472,11 @@ def correlation_group(
         )
 
         corr = compute_correlation_site_duration(
-            dt_cone_df, duration, kind, method=method
+            data=dt_cone_df,
+            duration=duration,
+            kind=kind,
+            method=method,
+            cone_number_summand=cone_number_summand,
         )
         if group is not None:
             corr["group"] = group.name
@@ -497,6 +498,7 @@ def compute_correlation_site_duration(
     dt_col: str = "delta_t",
     cones_col: str = "cones",
     method: str = "pearson",
+    cone_number_summand: float = 0,
 ) -> pd.DataFrame:
     """Compute the correlation for a given site and duration.
 
@@ -529,6 +531,9 @@ def compute_correlation_site_duration(
         Name of the column containing cone count data
     method : str
         Method kwarg to pass pandas.DataFrame.corr
+    cone_number_summand : float
+        Number to be added to all cones. This prevents the infinities that arise when exp(ΔT/n) is
+        calculated when n = 0.
 
     Returns
     -------
@@ -543,6 +548,10 @@ def compute_correlation_site_duration(
             duration
     """
     results = defaultdict(list)
+
+    # Add an arbitrary value to the number of cones, if that's what ya wanna do :/
+    data["cones"] = data["cones"] + cone_number_summand
+
     gb = data.groupby(["start1", "start2"])
 
     is_subprocess = worker_status is not None and task_id is not None
