@@ -378,13 +378,14 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         event : MouseEvent
             Click event
         """
-        self.w_t1.disconnect(self.w_t1, None, None, None)
-        self.w_t2.disconnect(self.w_t2, None, None, None)
-        self.w_t1.setValue(int(event.ydata))
-        self.w_t2.setValue(int(event.xdata))
-        self.w_t1.valueChanged.connect(self.t1t2_changed)
-        self.w_t2.valueChanged.connect(self.t1t2_changed)
-        self.t1t2_changed()
+        if event.xdata or event.ydata:
+            self.w_t1.disconnect(self.w_t1, None, None, None)
+            self.w_t2.disconnect(self.w_t2, None, None, None)
+            self.w_t1.setValue(int(event.ydata))
+            self.w_t2.setValue(int(event.xdata))
+            self.w_t1.valueChanged.connect(self.t1t2_changed)
+            self.w_t2.valueChanged.connect(self.t1t2_changed)
+            self.t1t2_changed()
 
     def refresh_scatter_plot(self):
         """Refresh the scatter plots."""
