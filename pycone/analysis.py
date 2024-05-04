@@ -349,9 +349,14 @@ def correlation(
             start1
             start2
             correlation
+            slope
             site
             duration
             group
+            x_mean   <-- mean of cone number (+cone_number_summand)
+            y_mean   <-- mean of the other variable; ΔT, exp(ΔT) or exp(ΔT/n)
+            x_std   <-- std deviation of cone number
+            y_std   <-- std deviation of the other variable; ΔT, exp(ΔT) or exp(ΔT/n)
     """
     with util.ParallelExecutor("[green]Calculating correlation:") as pe:
         for group in groups:
@@ -430,8 +435,13 @@ def correlation_group(
             start1
             start2
             correlation
+            slope
             site
             duration
+            x_mean   <-- mean of cone number (+cone_number_summand)
+            y_mean   <-- mean of the other variable; ΔT, exp(ΔT) or exp(ΔT/n)
+            x_std   <-- std deviation of cone number
+            y_std   <-- std deviation of the other variable; ΔT, exp(ΔT) or exp(ΔT/n)
     """
     years = np.sort(mean_t["year"].unique())[:-delta_t_year_gap]
 
@@ -546,11 +556,15 @@ def compute_correlation_site_duration(
             correlation
             site [optional]
             duration
+            x_mean   <-- mean of cone number (+cone_number_summand)
+            y_mean   <-- mean of the other variable; ΔT, exp(ΔT) or exp(ΔT/n)
+            x_std   <-- std deviation of cone number (+cone_number_summand)
+            y_std   <-- std deviation of the other variable; ΔT, exp(ΔT) or exp(ΔT/n)
     """
     results = defaultdict(list)
 
     # Add an arbitrary value to the number of cones, if that's what ya wanna do :/
-    data["cones"] = data["cones"] + cone_number_summand
+    data[cones_col] = data[cones_col] + cone_number_summand
 
     gb = data.groupby(["start1", "start2"])
 
@@ -586,6 +600,10 @@ def compute_correlation_site_duration(
                 }
             )
 
+        results["x_mean"].append(corr_inputs["a"].mean())
+        results["y_mean"].append(corr_inputs["b"].mean())
+        results["x_std"].append(corr_inputs["a"].std())
+        results["y_std"].append(corr_inputs["b"].std())
         results["correlation"].append(corr_inputs.corr(method=method)["a"]["b"])
 
         if is_subprocess:
