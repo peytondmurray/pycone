@@ -26,6 +26,8 @@ classifiers = [
 dependencies = [
     "numpy>=1.21.6",
     "scipy",
+    "graphviz",
+    "arviz",
     "matplotlib",
     "pandas",
     "openpyxl",
