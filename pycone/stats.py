@@ -1,4 +1,6 @@
 import pathlib
+import shutil
+import subprocess
 
 import arviz as az
 import matplotlib.pyplot as plt
@@ -12,25 +14,27 @@ from .util import add_days_since_start, df_to_rich, read_data
 plt.style.use("dark_background")
 console = Console()
 
-# Model 1: Delta-T model. Harder to model this because ΔT(t - τ_0) lags behind time t
-# continuously, but n(t - τ_1) really doesn't; it's the time since the last crop. So the data
-# preprocessing is harder to think about.
 
-# Model 2: Discrete times
-# \ n = ɑT[i] + βT[j] - ɣn[k]
-#     = ɑT_k-2 + βT_k-1 - ɣn_k       (for pine species)
+def render_to_terminal(model: pm.Model):
+    """Render the model to the terminal.
 
-# Model 3: Continuous times <-- This is probably the best. Allows the most freedom; should be
-# able to see pine species have different crop year gaps than other coniferous species
-# \ n(t) = ɑT(t - τ_0) + βT(t - τ_1) - ɣn(t - τ_2) + c
-# T ~ N(t_avg, sigma_t)
-#
-#
-# Model is autoregressive:
-# N(t) = N_0 + a*T_avg(t - tau_0) + b*T_avg(t - tau_1) - c*N(t - tau_2)
-#
-# where N(t) ~ Poisson(n_avg)
-# and T_avg(t - tau) = avg(T(t - tau), duration=d)
+    The model is rendered as an svg, then displayed using the icat kitten. If kitty isn't installed,
+    a log message is displayed instead and the image is not shown.
+
+    Parameters
+    ----------
+    model : pm.Model
+        PyMC model to display
+    """
+    if shutil.which("kitten") is None:
+        console.log(
+            "[red]kitty is not installed; cannot display model graph in terminal."
+        )
+        return
+    subprocess.run(
+        ["kitten", "icat", "--align", "left"],
+        input=model.to_graphviz().pipe(format="svg"),
+    )
 
 
 def get_data(
@@ -59,6 +63,27 @@ def get_data(
     return observed
 
 
+# Model 1: Delta-T model. Harder to model this because ΔT(t - τ_0) lags behind time t
+# continuously, but n(t - τ_1) really doesn't; it's the time since the last crop. So the data
+# preprocessing is harder to think about.
+
+# Model 2: Discrete times
+# \ n = ɑT[i] + βT[j] - ɣn[k]
+#     = ɑT_k-2 + βT_k-1 - ɣn_k       (for pine species)
+
+# Model 3: Continuous times <-- This is probably the best. Allows the most freedom; should be
+# able to see pine species have different crop year gaps than other coniferous species
+# \ n(t) = ɑT(t - τ_0) + βT(t - τ_1) - ɣn(t - τ_2) + c
+# T ~ N(t_avg, sigma_t)
+#
+#
+# Model is autoregressive:
+# N(t) = N_0 + a*T_avg(t - tau_0) + b*T_avg(t - tau_1) - c*N(t - tau_2)
+#
+# where N(t) ~ Poisson(n_avg)
+# and T_avg(t - tau) = avg(T(t - tau), duration=d)
+
+
 def main():
     # Likelihood is going to be poisson-distributed for each site; there's a waiting time
     # distribution for each cone appearing in the stand. There are few enough cones produced for
@@ -78,9 +103,8 @@ def main():
         idata = pm.sample(discard_tuned_samples=False)
         prior_samples = pm.sample_prior_predictive(1000)
 
-    #
-    model.to_graphviz(save="model.pdf")
     console.print(df_to_rich(az.summary(idata)))
+    render_to_terminal(model)
 
     az.plot_trace(idata)
     fig, ax = plt.subplots(1, 1, figsize=(8, 10))
