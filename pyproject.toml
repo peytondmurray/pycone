@@ -102,6 +102,8 @@ ignore = [
     "D206", # Advised to disable by ruff-format
     "E501", # Advised to disable by ruff-format
     "W191", # Advised to disable by ruff-format
+    "PD013", # `melt` is preferred to `stack` - false positives when using import pymc as pm
+    "ERA001", # Dead code
 ]
 
 [tool.ruff.per-file-ignores]
