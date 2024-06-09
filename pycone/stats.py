@@ -125,7 +125,7 @@ def get_data(
 
 def moving_average(
     t: SharedVariable,
-    width: pm.Discrete,
+    half_width: pm.Discrete,
     lag: pm.Discrete,
 ) -> pt.tensor.TensorLike:
     """Compute the moving average temperature.
@@ -134,8 +134,8 @@ def moving_average(
     ----------
     t : SharedVariable
         t data
-    width : pm.Discrete
-        Width of the moving average window
+    half_width : pm.Discrete
+        Half-width of the moving average window
     lag : pm.Discrete
         Lag time for the moving average to be computed at
 
@@ -144,13 +144,14 @@ def moving_average(
     pt.tensor.TensorLike
         Lagged moving average temperature
     """
+    width = 2 * half_width + 1
     # Reshape into 4d arrays to make conv2d happy; then flatten post-convolution to original dims
     kernel_4d = (pm.math.ones((width,), dtype=float) / width).reshape((1, 1, 1, -1))
     temperature_4d = t.reshape((1, 1, 1, -1))
     result = pm.math.full_like(t, np.nan, dtype=float)
 
-    pt.tensor.set_subtensor(
-        result[width // 2 : -width // 2],
+    result = pt.tensor.set_subtensor(
+        result[half_width:-half_width],
         conv.conv2d(temperature_4d, kernel_4d, border_mode="valid").flatten(),
     )
     return lagged(result, lag)
@@ -172,15 +173,14 @@ def lagged(data: SharedVariable, lag: pm.Discrete) -> pt.tensor.TensorLike:
         Lagged dataset
     """
     result = pm.math.full_like(data, np.nan, dtype=float)
-    pt.tensor.set_subtensor(result[:-lag], data[lag:])
-    return result
+    return pt.tensor.set_subtensor(result[:-lag], data[lag:])
 
 
-def my_model(t_data, c_data, c0, a, b, g, w0, l0, w1, l1, l2):
+def my_model(t_data, c_data, c0, a, b, g, hw0, l0, hw1, l1, l2):
     return (
         c0
-        + a * moving_average(t_data, w0, l0)
-        + b * moving_average(t_data, w1, l1)
+        + a * moving_average(t_data, hw0, l0)
+        + b * moving_average(t_data, hw1, l1)
         - g * lagged(c_data, l2)
     )
 
@@ -202,14 +202,14 @@ def main():
         alpha = pm.HalfNormal("alpha", sigma=10)
         beta = pm.HalfNormal("beta", sigma=10)
         gamma = pm.HalfNormal("gamma", sigma=10)
-        width_0 = pm.DiscreteUniform("width_0", 1, 200)
-        width_1 = pm.DiscreteUniform("width_1", 1, 200)
+        half_width_0 = pm.DiscreteUniform("width_0", 1, 100)
+        half_width_1 = pm.DiscreteUniform("width_1", 1, 100)
         lag_0 = pm.DiscreteUniform("lag_0", lower=180, upper=545)
         lag_1 = pm.DiscreteUniform("lag_1", lower=550, upper=910)
         lag_2 = pm.DiscreteUniform("lag_2", lower=915, upper=1275)
 
-        avg_t0 = pm.Deterministic("avg_t0", moving_average(t_data, width_0, lag_0))
-        avg_t1 = pm.Deterministic("avg_t1", moving_average(t_data, width_1, lag_1))
+        avg_t0 = pm.Deterministic("avg_t0", moving_average(t_data, half_width_0, lag_0))
+        avg_t1 = pm.Deterministic("avg_t1", moving_average(t_data, half_width_1, lag_1))
         lagged_c = pm.Deterministic("lagged_c", lagged(c_data, lag_2))
 
         c_mu = pm.Deterministic(
@@ -220,7 +220,6 @@ def main():
         c_likelihood = pm.Poisson("c_likelihood", mu=c_mu, observed=c_data)
 
         render_to_terminal(model)
-
         idata = pm.sample(discard_tuned_samples=False)
         # prior_samples = pm.sample_prior_predictive(1000)
 
