@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor as pt
+import scipy.stats as ss
 from pytensor.compile.sharedvalue import SharedVariable
-from pytensor.tensor import conv
+from pytensor.tensor import as_tensor, conv
 from rich.console import Console
 
 from .util import add_days_since_start, df_to_rich, read_data
@@ -148,7 +149,7 @@ def moving_average(
     # Reshape into 4d arrays to make conv2d happy; then flatten post-convolution to original dims
     kernel_4d = (pm.math.ones((width,), dtype=float) / width).reshape((1, 1, 1, -1))
     temperature_4d = t.reshape((1, 1, 1, -1))
-    result = pm.math.full_like(t, np.nan, dtype=float)
+    result = pm.math.full_like(t, -np.inf, dtype=float)
 
     result = pt.tensor.set_subtensor(
         result[half_width:-half_width],
@@ -172,17 +173,131 @@ def lagged(data: SharedVariable, lag: pm.Discrete) -> pt.tensor.TensorLike:
     pt.tensor.TensorLike
         Lagged dataset
     """
-    result = pm.math.full_like(data, np.nan, dtype=float)
+    result = pm.math.full_like(data, -np.inf, dtype=float)
     return pt.tensor.set_subtensor(result[:-lag], data[lag:])
 
 
-def my_model(t_data, c_data, c0, a, b, g, hw0, l0, hw1, l1, l2):
-    return (
+def avgt(t_data: np.ndarray, half_width: int, lag: int) -> np.ndarray:
+    size = 2 * half_width + 1
+    kernel = np.ones((size,)) / size
+    avg = np.convolve(t_data, kernel, mode="full")
+    avg[:half_width] = np.nan
+    avg[-half_width:] = np.nan
+    result = np.full(avg.shape, np.nan)
+    result[:-lag] = avg[lag:]
+    return result
+
+
+def lagc(c_data: np.ndarray, lag: int) -> np.ndarray:
+    result = np.full(c_data.shape, np.nan)
+    result[:-lag] = c_data[lag:]
+    return result
+
+
+def my_loglike(
+    c0,
+    alpha,
+    beta,
+    gamma,
+    half_width_0,
+    half_width_1,
+    lag_0,
+    lag_1,
+    lag_2,
+    t_data,
+    c_data,
+) -> np.ndarray:
+    # Must return an _array_ of probabilities, one for each c_data
+    mu = (
         c0
-        + a * moving_average(t_data, hw0, l0)
-        + b * moving_average(t_data, hw1, l1)
-        - g * lagged(c_data, l2)
+        + alpha * avgt(t_data, half_width_0, lag_0)
+        + beta * avgt(t_data, half_width_1, lag_1)
+        - lagc(c_data, lag_2)
     )
+    log_prob = np.log(ss.poisson(mu).pmf(c_data))
+
+    # Replace the convolution artifacts with -np.inf
+    log_prob[np.isnan(log_prob)] = -np.inf
+    return log_prob
+
+
+class ModelOp(pt.graph.Op):
+    # https://www.pymc.io/projects/examples/en/latest/howto/blackbox_external_likelihood_numpy.html#using-a-potential-instead-of-customdist
+    # For reference
+    def make_node(
+        self,
+        c0,
+        alpha,
+        beta,
+        gamma,
+        half_width_0,
+        half_width_1,
+        lag_0,
+        lag_1,
+        lag_2,
+        t_data,
+        c_data,
+    ):
+        inputs = [
+            as_tensor(c0),
+            as_tensor(alpha),
+            as_tensor(beta),
+            as_tensor(gamma),
+            as_tensor(half_width_0),
+            as_tensor(half_width_1),
+            as_tensor(lag_0),
+            as_tensor(lag_1),
+            as_tensor(lag_2),
+            as_tensor(t_data),
+            as_tensor(c_data),
+        ]
+        # Define output type, in our case a vector of likelihoods
+        # with the same dimensions and same data type as data
+        # If data must always be a vector, we could have hard-coded
+        # outputs = [pt.vector()]
+        outputs = [c_data.type()]
+
+        # Apply is an object that combines inputs, outputs and an Op (self)
+        return pt.graph.Apply(self, inputs, outputs)
+
+    def perform(
+        self, node: pt.graph.Apply, inputs: list[np.ndarray], outputs: list[list[None]]
+    ) -> None:
+        # This is the method that compute numerical output
+        # given numerical inputs. Everything here is numpy arrays
+        (
+            c0,
+            alpha,
+            beta,
+            gamma,
+            half_width_0,
+            half_width_1,
+            lag_0,
+            lag_1,
+            lag_2,
+            t_data,
+            c_data,
+        ) = inputs
+
+        # call our numpy log-likelihood function
+        loglike_eval = my_loglike(
+            c0,
+            alpha,
+            beta,
+            gamma,
+            half_width_0,
+            half_width_1,
+            lag_0,
+            lag_1,
+            lag_2,
+            t_data,
+            c_data,
+        )
+
+        # Save the result in the outputs list provided by PyTensor
+        # There is one list per output, each containing another list
+        # pre-populated with a `None` where the result should be saved.
+        outputs[0][0] = np.asarray(loglike_eval)
 
 
 def main():
@@ -195,6 +310,10 @@ def main():
     with pm.Model() as model:
         t_data = pm.MutableData("t_data", data["t"])
         c_data = pm.MutableData("c_data", data["c"])
+
+        # Cut off 1275 points from the beginning of the dataset, because the first
+        # observed data point depends on the value of c (at most) 1275 days beforehand
+        # c_data_observed = pm.MutableData("c_data_observed", data["c"][1275:])
 
         # Uninformative uniform prior for the initial number c.
         c0 = pm.DiscreteUniform("c0", lower=0, upper=1000)
