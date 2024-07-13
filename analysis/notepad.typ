@@ -183,6 +183,69 @@ In general, we don't expect there to be a simple linear relationship between $n$
 This bayesian approach is just one method. You could do X. You could do whatever. This is just one
 method. I think it has some nice features that make it useful, so that's why I chose it.
 
+
+=== Model
+
+==== Likelihood
+
+$
+n(t) = alpha Delta T(t - tau_0) - beta n(t - tau_1)
+$
+
+Write down a posterior distribution. According to Bayes:
+
+$
+cal(P)(theta | D) = frac(cal(L)(D | theta) P(theta), P(D))
+$
+
+Denominator is a difficult integral, but it works out to a normalization constant so we don't really
+need to deal with it:
+
+$
+P(D) = integral_theta cal(L)(D | theta) P(theta) d theta
+$
+
+Instead, we focus on the likelihood $cal(L)$ and the priors $P$. The likelihood is just the
+probability of observing our data given the model. The probability of observing an individual data
+point $(n_i)$ given our model is:
+
+$
+P(n_i | overline(n), sigma_n) = frac(1, sqrt(2 pi sigma_n^2)) exp[-frac((overline(n) - n_i)^2, 2 sigma_n^2)]
+$
+
+So the probability of observing all ${n_i}$ is the product of these individual probabilities:
+
+$
+P({n_i} | overline(n), sigma_n) = product_i frac(1, sqrt(2 pi sigma_n^2)) exp[-frac((overline(n) - n_i)^2, 2 sigma_n^2)]
+$
+
+But we already know what the expected value of $overline(n)$ is - it's our model! Substitute this in
+and doing some algebra:
+
+$
+P({n_i} | alpha, beta, sigma_n) = frac(1, sqrt(2 pi sigma_n^2)) exp[-frac(1, 2) sum_i frac((alpha Delta T_(i-tau_0) - beta n_(i-tau_1) - n_i)^2,  sigma_n^2)]
+$
+
+Where $alpha$, $beta$, and $sigma_n$ are the parameters of our model. If you include statistical
+uncertanties in our $Delta T$ measurements, the likelihood is:
+
+$
+cal(L)({n_i, Delta T_(i-tau_0)} | alpha, beta, sigma_n, sigma_(Delta T)) =
+
+frac(1, 2 pi sigma_n sigma_(Delta T)) exp[-frac(1, 2) sum_i frac((alpha Delta T_(i-tau_0) - beta
+n_(i-tau_1))^2, sigma_n^2) + frac((overline(Delta T)_(i-tau_0) - Delta T_(i-tau_0))^2, sigma_(Delta T)^2)]
+$
+
+where $overline(Delta T)_(i-tau_0)$ is a fit parameter to be marginalized over for each measurement.
+
+==== Priors
+
+- $P(alpha)$: Noninformative prior $(-infinity, infinity)$
+- $P(beta)$: Noninformative prior $(0, 1)$
+- $P(sigma_n)$: Noninformative (Jeffrey's) prior $∝ 1/sigma_n$
+- $P(sigma_(Delta T))$: Noninformative (Jeffrey's) prior $∝ 1/sigma_(Delta T)$
+- $P(overline(Delta T))$: $cal(N)("historical data")$
+
 === How do we know if our analysis is working?
 
 + Convergence diagnostics

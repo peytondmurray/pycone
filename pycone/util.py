@@ -1,3 +1,4 @@
+import datetime
 import multiprocessing as mp
 import pathlib
 import re
@@ -10,6 +11,7 @@ from typing import Any, overload
 import numpy as np
 import pandas as pd
 import rich.progress as rp
+import rich.table as rt
 
 
 class CorrelationType(Enum):
@@ -516,30 +518,30 @@ class Group:
         return str(vars(self))
 
 
-def get_days_since_start(
-    data: pd.DataFrame,
-    year_col: str = "start",
-    doy_col: str = "day_of_year",
-) -> pd.DataFrame:
-    """Get the number of days since the first datapoint.
+def year_day_to_ordinal(
+    data: pd.DataFrame, origin: pd.Timestamp, doy_col: str
+) -> pd.Timestamp:
+    """Compute the number of days since the origin using the date info in `data`.
 
     Parameters
     ----------
     data : pd.DataFrame
-        DataFrame containing 'year' and 'start' columns
-    year_col : str
-        Year column
+        DataFrame containing 'year' and 'start' columns, which correspond to a
+        timestamp; 'start' is the number of days since the start of the year.
+    origin : pd.Timestamp
+        Reference date to use
     doy_col : str
-        Ordinal day of year column
+        Column containing the day of the year for each row
 
     Returns
     -------
-    pd.DataFrame
-        The input data but with a 'days_since_start' column appended
+    pd.Series
+        Series containing the integer number of days since the origin for each
+        timestamp
     """
     # Combine the year, month, and day into an integer that will be parsed as
     # a string.
-    year_str = data[year_col].astype(int) * 10000
+    year_str = data["year"].astype(int) * 10000
     month_str = np.ones(len(data), dtype=int) * 100
     day_str = np.ones(len(data), dtype=int)
 
@@ -547,4 +549,53 @@ def get_days_since_start(
         year_str + month_str + day_str, format="%Y%m%d"
     ) + pd.to_timedelta(data[doy_col] - 1, unit="day")
 
-    return (dates - dates.min()).dt.days
+    return (dates - origin).dt.days
+
+
+def add_days_since_start(data: pd.DataFrame, doy_col: str = "start") -> pd.DataFrame:
+    """Add a new column to the data containing the number of days since the first datapoint.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame containing 'year' and 'start' columns
+    doy_col : str
+        Column containing the day of the year for each row
+
+    Returns
+    -------
+    pd.DataFrame
+        The input data but with a 'days_since_start' column appended
+    """
+    first_year = data.loc[data["year"] == data["year"].min()]
+    first_data = first_year.loc[
+        (first_year[doy_col] == first_year[doy_col].min())
+    ].iloc[[0]]
+
+    y0 = first_data["year"].iloc[0]
+    d0 = first_data[doy_col].iloc[0]
+
+    first_date = pd.Timestamp(year=y0, month=1, day=1) + pd.Timedelta(days=d0 - 1)
+
+    data["days_since_start"] = year_day_to_ordinal(data, first_date, doy_col)
+    return data
+
+
+def df_to_rich(df: pd.DataFrame) -> rt.Table:
+    """Convert a DataFrame to a rich Table.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data to display in the table
+
+    Returns
+    -------
+    rt.Table
+        Table containing the input data
+    """
+    table = rt.Table(*df.columns)
+    for _, row in df.iterrows():
+        table.add_row(*[str(item) for item in row.to_list()])
+
+    return table
