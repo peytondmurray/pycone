@@ -12,6 +12,7 @@ import tarmac
 import tqdm
 from rich.console import Console
 
+from .preprocess import load_data
 from .util import add_days_since_start, read_data
 
 az.style.use('default')
@@ -22,6 +23,7 @@ def get_data(
     weather_path: str = "weather.csv",
     cones_path: str = "cones.csv",
     impute_time: bool = False,
+    site: int = 1,
 ) -> pd.DataFrame:
     """Get the cone and weather data.
 
@@ -56,15 +58,19 @@ def get_data(
         observed dataset. Many dates have no measured values, and thus have a
         lot of nan values. This makes moving average computations easier later on.
     """
-    if pathlib.Path("observed.csv").exists():
-        console.log(f"[bold yellow]Loading existing data at {weather_path}")
-        observed = read_data("observed.csv")
+    fname = f"observed_site_{site}.csv"
+    if pathlib.Path(fname).exists():
+        console.log(f"[bold yellow]Loading existing data at {fname}")
+        observed = read_data(fname)
     else:
-        # Convert year+ordinal day of year to just day since the start of the dataset
-        site = 1
-        weather = read_data(weather_path).rename(columns={"tmean (degrees f)": "t"})
-        cones = read_data(cones_path)
+        if pathlib.Path(weather_path).exists() and pathlib.Path(cones_path).exists():
+            # Convert year+ordinal day of year to just day since the start of the dataset
+            weather = read_data(weather_path)
+            cones = read_data(cones_path)
+        else:
+            cones, weather = load_data()
 
+        weather = weather.rename(columns={"tmean (degrees f)": "t"})
         weather = weather.loc[weather["site"] == site]
         cones = cones.loc[cones["site"] == site]
 
@@ -74,7 +80,7 @@ def get_data(
         observed = add_days_since_start(observed, doy_col="day_of_year")[
             ["year", "day_of_year", "days_since_start", "t", "cones"]
         ]
-        observed.to_csv("observed.csv", index=False)
+        observed.to_csv(fname, index=False)
 
     obs = observed.rename(columns={"cones": "c"})
 
