@@ -76,9 +76,7 @@ def plot_correlation_duration_grids(
                     "ncols": ncols,
                     "figsize": figsize,
                     "extent": extent,
-                    "filename": filename.format(group.name)
-                    if filename is not None
-                    else None,
+                    "filename": filename.format(group.name) if filename is not None else None,
                     "task_id": task_id,
                     "worker_status": pe.worker_status,
                     **group.correlation_kwargs,
@@ -210,9 +208,7 @@ def plot_correlation_duration_grid(
             cmap="BrBG",
             aspect="equal",
         )
-        axis.text(
-            0.75, 0.05, f"$d$ = {duration}", transform=ax[ax_row, ax_col].transAxes
-        )
+        axis.text(0.75, 0.05, f"$d$ = {duration}", transform=ax[ax_row, ax_col].transAxes)
         axis.set_xlim(50, 300)
         axis.set_ylim(50, 300)
         axis.set_xticks(
@@ -230,14 +226,10 @@ def plot_correlation_duration_grid(
         axis.axhline(y=213, color="k")
 
         if ax_row == nrows - 1 and ax_col == ncols // 2:
-            axis.set_xlabel(
-                f"Start of interval for year ${year_i}$", fontsize="x-large"
-            )
+            axis.set_xlabel(f"Start of interval for year ${year_i}$", fontsize="x-large")
 
         if ax_col == 0 and ax_row == nrows // 2:
-            axis.set_ylabel(
-                f"Start of interval for year ${year_j}$", fontsize="x-large"
-            )
+            axis.set_ylabel(f"Start of interval for year ${year_j}$", fontsize="x-large")
 
         if is_subprocess:
             worker_status[task_id] = {"items_completed": i + 1, "total": len(durations)}  # type: ignore
@@ -280,9 +272,7 @@ def plot_correlation_duration_grid(
     return fig
 
 
-def export_all_site_interval_colormaps(
-    df: pd.DataFrame, data_col: str, extension: str = "pdf"
-):
+def export_all_site_interval_colormaps(df: pd.DataFrame, data_col: str, extension: str = "pdf"):
     """Export all site interval colormaps to pdfs.
 
     Parameters

@@ -8,9 +8,7 @@ wtau = np.linspace(0, np.pi * 10, 10000)
 fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 
 betas = np.array([-1, -0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1])
-colors = plt.cm.inferno_r(
-    0.25 + 0.75 * (betas - min(betas)) / (max(betas) - min(betas))
-)
+colors = plt.cm.inferno_r(0.25 + 0.75 * (betas - min(betas)) / (max(betas) - min(betas)))
 
 for beta, color in zip(betas, colors, strict=True):
     h = alpha / np.sqrt(1 + beta**2 - 2 * beta * np.cos(wtau))

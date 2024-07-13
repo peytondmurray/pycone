@@ -46,9 +46,7 @@ def load_weather() -> pd.DataFrame:
     weather_path = pathlib.Path("weather.csv")
     console.rule("[bold yellow]Load weather data", style=Style(color="dark_red"))
     if weather_path.exists():
-        console.log(
-            f"{weather_path} already exists in the current directory; skipping."
-        )
+        console.log(f"{weather_path} already exists in the current directory; skipping.")
         weather = util.read_data(weather_path)
     else:
         weather = preprocess.load_weather(weather_path)
@@ -74,9 +72,7 @@ def compute_mean_t(weather: pd.DataFrame) -> pd.DataFrame:
         Mean temperature data
     """
     mean_t_path = pathlib.Path("mean_t.csv")
-    console.rule(
-        "[bold yellow]Compute the mean temperature", style=Style(color="dark_red")
-    )
+    console.rule("[bold yellow]Compute the mean temperature", style=Style(color="dark_red"))
     if mean_t_path.exists():
         console.log(f"{mean_t_path} already exists in the current directory; skipping.")
         mean_t = util.read_data(mean_t_path)
@@ -118,9 +114,7 @@ def compute_correlation(
     correlation_path = pathlib.Path(output)
     console.rule("[bold yellow]Compute the correlation", style=Style(color="dark_red"))
     if correlation_path.exists():
-        console.log(
-            f"{correlation_path} already exists in the current directory; skipping."
-        )
+        console.log(f"{correlation_path} already exists in the current directory; skipping.")
         corr = util.read_data(correlation_path)
     else:
         corr = analysis.correlation(mean_t=mean_t, cones=cones, groups=groups)

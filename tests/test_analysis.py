@@ -188,9 +188,7 @@ def test_calculate_delta_t():
             "year": year,
             "start": start,
             "duration": duration,
-            "mean_t": np.concatenate(
-                (np.full(5, 1), np.full(5, 1.5), np.full(10, 3.14))
-            ),
+            "mean_t": np.concatenate((np.full(5, 1), np.full(5, 1.5), np.full(10, 3.14))),
         }
     )
 
@@ -203,6 +201,4 @@ def test_calculate_delta_t():
 
     # For site 1, the difference is always 0.5 for each interval start1/start2 combination.
     # For site 2, the difference is always 0 - the temperature remains constant for both years.
-    assert_array_equal(
-        result["delta_t"], np.concatenate((np.full(25, 0.5), np.full(25, 0)))
-    )
+    assert_array_equal(result["delta_t"], np.concatenate((np.full(25, 0.5), np.full(25, 0))))
