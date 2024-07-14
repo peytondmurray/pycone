@@ -247,7 +247,7 @@ def log_probability(theta: tuple, f: np.ndarray, c: np.ndarray) -> tuple[float, 
     return lp + log_likelihood, log_likelihood_vect
 
 
-def run_sampler():
+def run_sampler(model_name: str = "model"):
     """Run the sampler."""
     data = get_data(impute_time=True)
 
@@ -295,24 +295,27 @@ def run_sampler():
     idata = az.from_emcee(
         sampler=sampler,
         var_names=["c0", "alpha", "beta", "width_0", "width_1", "lag_0", "lag_1", "lag_2"],
-        # var_names=['c0', 'alpha', 'beta', 'gamma', 'width_0', 'width_1', 'lag_0', 'lag_1', 'lag_2'],
         arg_names=["T", "c"],
         blob_names=["log_likelihood"],
     )
 
     samples = sampler.get_chain()
-    np.save("posterior_samples_nogamma.npy", samples)
+    np.save(f"posterior_samples_{model_name}.npy", samples)
 
-    idata.to_zarr("posterior_samples_nogamma.zarr")
+    idata.to_zarr(f"posterior_samples_{model_name}.zarr")
 
 
 def sample_posterior_predictive(
-    samples: np.ndarray,
-    data: np.ndarray,
+    samples: np.ndarray | str | None = None,
+    data: np.ndarray | None = None,
+    model_name: str = "model",
     n_predictions: int | None = None,
-    burn_in: int = 6000,
+    burn_in: int = 16000,
 ) -> np.ndarray:
     """Sample from the posterior predictive distribution.
+
+    This uses entirely self-generated data - i.e. it initializes with real cone data,
+    but all subsequent samples are built on top of other prior predictive samples.
 
     Parameters
     ----------
@@ -320,6 +323,8 @@ def sample_posterior_predictive(
         Posterior samples
     data : np.ndarray
         Observed data
+    model_name : str
+        Name of the model
     n_predictions : int | None
         Number of predictions to make
     burn_in : int | None
@@ -330,6 +335,15 @@ def sample_posterior_predictive(
     np.ndarray
         Posterior predictive samples for the number of cones
     """
+    if samples is None:
+        samples = f"posterior_samples_{model_name}.npy"
+
+    if isinstance(samples, str):
+        samples = np.load(samples)
+
+    if data is None:
+        data = get_data(impute_time=True)
+
     f = data["t"].to_numpy()
     c = data["c"].to_numpy()
 
@@ -346,38 +360,48 @@ def sample_posterior_predictive(
         )
 
     n_steps = data.shape[0]
-    posterior_predictive = np.zeros((n_steps, n_predictions), dtype=float)
-
+    prediction = np.zeros((n_predictions, n_steps), dtype=int)
     for i in tqdm.trange(n_predictions, desc="Sampling the posterior predictive distribution..."):
-        c0, alpha, beta, width_0, width_1, lag_0, lag_1, lag_2 = samples[i, :]
-        # c0, alpha, beta, gamma, width_0, width_1, lag_0, lag_1, lag_2 = samples[i, :]
+        prediction[i, :] = posterior_predictive(samples[i, :], f, c)
 
-        for step in tqdm.trange(n_steps, desc=f"Sampling timesteps for sample {i}..."):
-            slice0 = slice(step - lag_0 - width_0, step - lag_0 + width_0)
-            slice1 = slice(step - lag_1 - width_1, step - lag_1 + width_1)
+    np.save(f"posterior_predictive_{model_name}.npy", prediction)
 
-            if (
-                (slice0.start < 0 or slice0.stop > n_steps)
-                or (slice1.start < 0 or slice1.stop > n_steps)
-                or (step - lag_2 < 0)
-            ):
-                posterior_predictive[step, i] = np.nan
-                continue
 
-            mu = c0 + alpha * f[slice0].mean() + beta * f[slice1].mean() - c[step - lag_2]
-            # mu = c0 + alpha*f[slice0].mean() + beta*f[slice1].mean() - gamma*c[step - lag_2]
+def posterior_predictive(
+    theta: tuple[float, ...],
+    f: np.ndarray,
+    c: np.ndarray,
+) -> np.ndarray:
+    """Generate a set of independent posterior predictive samples.
 
-            if np.isnan(mu):
-                posterior_predictive[step, i] = np.nan
-                continue
+    Parameters
+    ----------
+    theta : tuple[float, ...]
+        Model parameter vector
+    f : np.ndarray
+        Temperature
+    c : np.ndarray
+        Cone number
 
-            posterior_predictive[step, i] = st.poisson.rvs(mu, size=1)
+    Returns
+    -------
+    np.ndarray
+        Time series (same shape as `f` and `c`) of independent cone predictions
+    """
+    c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
 
-    np.save("posterior_predictive_samples.npy", posterior_predictive)
+    c_mu: np.ndarray = (
+        c0
+        + alpha * mavg(f, width_alpha, lag_alpha)
+        + beta * mavg(f, width_beta, lag_beta)
+        - lagged(c, lag_last_cone)
+    )
+    return st.poisson.rvs(c_mu)
 
 
 def plot_chains(
-    chains: str | np.ndarray = "posterior_samples_nogamma.npy",
+    model_name: str,
+    chains: str | np.ndarray | None = None,
     fig: plt.Figure | None = None,
     burn_in: int = 6000,
 ) -> plt.Figure:
@@ -385,6 +409,8 @@ def plot_chains(
 
     Parameters
     ----------
+    model_name: str
+        Name of the model to plot
     chains : str | np.ndarray
         Sample chains
     fig : plt.Figure | None
@@ -400,6 +426,9 @@ def plot_chains(
     if fig is None:
         fig = plt.figure()
 
+    if chains is None:
+        chains = f"posterior_samples_{model_name}.npy"
+
     if isinstance(chains, str):
         chains = np.load(chains)
 
@@ -410,7 +439,6 @@ def plot_chains(
             "c0",
             "alpha",
             "beta",
-            # "gamma",
             "width_0",
             "width_1",
             "lag_0",
@@ -422,7 +450,8 @@ def plot_chains(
 
 
 def plot_corner(
-    chains: str | np.ndarray = "posterior_samples_nogamma.npy",
+    model_name: str,
+    chains: str | np.ndarray | None = None,
     fig: plt.Figure | None = None,
     burn_in: int = 6000,
 ) -> plt.Figure:
@@ -430,6 +459,8 @@ def plot_corner(
 
     Parameters
     ----------
+    model_name: str
+        Name of the model to plot
     chains : str | np.ndarray
         MCMC sample chains
     fig : plt.Figure | None
@@ -445,6 +476,9 @@ def plot_corner(
     if fig is None:
         fig = plt.figure()
 
+    if chains is None:
+        chains = f"posterior_samples_{model_name}.npy"
+
     if isinstance(chains, str):
         chains = np.load(chains)
 
@@ -455,7 +489,6 @@ def plot_corner(
             "c0",
             "alpha",
             "beta",
-            # "gamma",
             "width_0",
             "width_1",
             "lag_0",
@@ -466,8 +499,60 @@ def plot_corner(
     return fig
 
 
+def plot_posterior_predictive(
+    model_name: str = "model",
+    data: pd.DataFrame | None = None,
+    posterior_predictive: np.ndarray | str | None = None,
+    fig: plt.Figure | None = None,
+) -> plt.Figure:
+    """Plot the posterior predictive samples.
+
+    Parameters
+    ----------
+    model_name : str
+        Name of the model
+    data : pd.DataFrame | None
+        Observed data
+    posterior_predictive : np.ndarray | str | None
+        Posterior predictive samples
+    fig : plt.Figure | None
+        Figure in which to plot
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing one Axes per prediction; each axis shows
+        a full time series for a sample of the model parameters
+    """
+    if data is None:
+        data = get_data(impute_time=True)
+
+    if fig is None:
+        fig = plt.figure()
+
+    if posterior_predictive is None:
+        posterior_predictive = f"posterior_predictive_{model_name}.npy"
+
+    if isinstance(posterior_predictive, str):
+        posterior_predictive = np.load(posterior_predictive)
+
+    npredictions, nsteps = posterior_predictive.shape
+
+    axes = fig.subplots(npredictions, 1)
+    if npredictions == 1:
+        axes = [axes]
+
+    for i in range(npredictions):
+        axes[i].plot(posterior_predictive[i, :], "-r", label="predicted")
+        axes[i].plot(data["c"], "-k", label="measured")
+
+    axes[0].legend()
+    return fig
+
+
 if __name__ == "__main__":
-    run_sampler()
-    plot_chains(burn_in=0)
-    plot_corner(burn_in=16000)
+    model_name = "no_gamma"
+    run_sampler(model_name)
+    plot_chains(model_name, burn_in=0)
+    plot_corner(model_name, burn_in=16000)
     plt.show()
