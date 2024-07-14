@@ -379,8 +379,24 @@ def sample_posterior_predictive(
 def plot_chains(
     chains: str | np.ndarray = "posterior_samples_nogamma.npy",
     fig: plt.Figure | None = None,
-    burn_in=6000,
+    burn_in: int = 6000,
 ) -> plt.Figure:
+    """Plot the MCMC chains.
+
+    Parameters
+    ----------
+    chains : str | np.ndarray
+        Sample chains
+    fig : plt.Figure | None
+        Figure in which to plot; if None, a new figure is returned
+    burn_in :  int
+        Number of steps to ignore from the front of the dataset
+
+    Returns
+    -------
+    plt.Figure
+        The plot of the chains for each dimension
+    """
     if fig is None:
         fig = plt.figure()
 
@@ -408,8 +424,24 @@ def plot_chains(
 def plot_corner(
     chains: str | np.ndarray = "posterior_samples_nogamma.npy",
     fig: plt.Figure | None = None,
-    burn_in=6000,
+    burn_in: int = 6000,
 ) -> plt.Figure:
+    """Generate a corner plot.
+
+    Parameters
+    ----------
+    chains : str | np.ndarray
+        MCMC sample chains
+    fig : plt.Figure | None
+        Figure in which to plot; if None, a new figure is generated
+    burn_in : int
+        Number of samples to ignore from the front of the dataset
+
+    Returns
+    -------
+    plt.Figure
+        The corner plot
+    """
     if fig is None:
         fig = plt.figure()
 
