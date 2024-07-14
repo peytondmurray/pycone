@@ -1,4 +1,3 @@
-import datetime
 import multiprocessing as mp
 import pathlib
 import re
@@ -518,9 +517,7 @@ class Group:
         return str(vars(self))
 
 
-def year_day_to_ordinal(
-    data: pd.DataFrame, origin: pd.Timestamp, doy_col: str
-) -> pd.Timestamp:
+def year_day_to_ordinal(data: pd.DataFrame, origin: pd.Timestamp, doy_col: str) -> pd.Timestamp:
     """Compute the number of days since the origin using the date info in `data`.
 
     Parameters
@@ -545,9 +542,9 @@ def year_day_to_ordinal(
     month_str = np.ones(len(data), dtype=int) * 100
     day_str = np.ones(len(data), dtype=int)
 
-    dates = pd.to_datetime(
-        year_str + month_str + day_str, format="%Y%m%d"
-    ) + pd.to_timedelta(data[doy_col] - 1, unit="day")
+    dates = pd.to_datetime(year_str + month_str + day_str, format="%Y%m%d") + pd.to_timedelta(
+        data[doy_col] - 1, unit="day"
+    )
 
     return (dates - origin).dt.days
 
@@ -568,9 +565,7 @@ def add_days_since_start(data: pd.DataFrame, doy_col: str = "start") -> pd.DataF
         The input data but with a 'days_since_start' column appended
     """
     first_year = data.loc[data["year"] == data["year"].min()]
-    first_data = first_year.loc[
-        (first_year[doy_col] == first_year[doy_col].min())
-    ].iloc[[0]]
+    first_data = first_year.loc[(first_year[doy_col] == first_year[doy_col].min())].iloc[[0]]
 
     y0 = first_data["year"].iloc[0]
     d0 = first_data[doy_col].iloc[0]

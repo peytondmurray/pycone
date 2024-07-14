@@ -614,13 +614,3 @@ def compute_correlation_site_duration(
         result["site"] = site
     result["duration"] = duration
     return result
-
-
-def combine_mean_t_with_cones(
-    mean_t: pd.DataFrame,
-    cones: pd.DataFrame,
-    tau_0: int = 1,
-    tau_1: int = 2,
-    tau_2: int = 3,
-) -> pd.DataFrame:
-    observed = util.add_days_since_start(mean_t)

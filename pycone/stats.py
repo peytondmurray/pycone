@@ -288,21 +288,14 @@ def run_simple_model():
 #     )
 #     return result
 
-def make_coeffs(
-    data: np.ndarray,
-    width: pm.Discrete,
-    lag: pm.Discrete
-) -> pt.tensor.TensorLike:
+
+def make_coeffs(data: np.ndarray, width: pm.Discrete, lag: pm.Discrete) -> pt.tensor.TensorLike:
     coeffs = pm.math.zeros(
         shape=data.size,
         dtype=float,
     )
     return pt.tensor.set_subtensor(
-        coeffs[lag:lag+width+1],
-        pm.math.full(
-            shape=(lag + width,),
-            fill_value=1/width
-        )
+        coeffs[lag : lag + width + 1], pm.math.full(shape=(lag + width,), fill_value=1 / width)
     )
 
 
@@ -325,24 +318,26 @@ def run_ar():
         # lag_1 = pm.DiscreteUniform("lag_1", lower=550, upper=910)
         # lag_2 = pm.DiscreteUniform("lag_2", lower=915, upper=1275)
 
-
         rho = make_coeffs(t_data, width_0, lag_0)
         # sigma = make_coeffs(t_data, width_1, lag_1)
         # eta = make_coeffs(c_data, 1, lag_2)
 
-        ar_t_1 = pm.AR("ar_t_1", rho=rho, sigma=0, ar_order=n_values, init_dist=pm.Normal.dist(60, 20), shape=(n_values,))
+        ar_t_1 = pm.AR(
+            "ar_t_1",
+            rho=rho,
+            sigma=0,
+            ar_order=n_values,
+            init_dist=pm.Normal.dist(60, 20),
+            shape=(n_values,),
+        )
         # ar_t_2 = pm.AR("ar_t_2", rho=sigma, sigma=0, ar_order=n_values, init_dist=pm.Normal.dist(60, 20), shape=(n_values,))
         # ar_c = pm.AR("ar_c", rho=eta, sigma=0, ar_order=n_values, init_dist=pm.Normal.dist(10, 1), shape=(n_values,))
 
         c_mu = pm.Deterministic(
             "c_mu",
-            c0 + alpha*ar_t_1 #+ beta*ar_t_2 + gamma*ar_c
+            c0 + alpha * ar_t_1,  # + beta*ar_t_2 + gamma*ar_c
         )
-        c_model = pm.Poisson(
-            "c_model",
-            mu=c_mu,
-            observed=c_data
-        )
+        c_model = pm.Poisson("c_model", mu=c_mu, observed=c_data)
 
         render_to_terminal(model)
         idata = pm.sample()
@@ -385,6 +380,7 @@ def lag(data: pd.Series, lag: pm.Discrete):
     lagged_data = pt.tensor.set_subtensor(lagged_data[:-lag], data[lag:])
     return lagged_data
 
+
 def mavg2(data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
     result, _updates = pt.scan(
         fn=fmavg,
@@ -394,11 +390,12 @@ def mavg2(data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
     )
     return result
 
+
 def fmavg(i: int, data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
     start = i - lag
     return pm.math.switch(
         pm.math.and_(pm.math.ge(start, 0), pm.math.lt(start + width, data.shape[0])),
-        data[start:start + width].mean(),
+        data[start : start + width].mean(),
         np.nan,
     )
 
@@ -414,9 +411,9 @@ def runmodel():
     with pm.Model() as model:
         n_values = len(data)
 
-        c_vals = data['c'].values
-        f_vals = data['t'].values
-        day_vals = data['days_since_start'].values
+        c_vals = data["c"].values
+        f_vals = data["t"].values
+        day_vals = data["days_since_start"].values
 
         days_since_start_data = pm.Data("days_since_start_data", day_vals)
         f_data = pm.Data("f_data", f_vals)
@@ -434,14 +431,13 @@ def runmodel():
 
         c_mu = pm.Deterministic(
             "c_mu",
-            c0 + alpha*mavg2(f_data, width_0, lag_0) + beta*mavg2(f_data, width_1, lag_1) + gamma*lag(c_data, lag_2)
+            c0
+            + alpha * mavg2(f_data, width_0, lag_0)
+            + beta * mavg2(f_data, width_1, lag_1)
+            + gamma * lag(c_data, lag_2),
         )
 
-        c_model = pm.Poisson(
-            "c_model",
-            mu=c_mu,
-            observed=c_data
-        )
+        c_model = pm.Poisson("c_model", mu=c_mu, observed=c_data)
 
         render_to_terminal(model)
         idata = pm.sample()
