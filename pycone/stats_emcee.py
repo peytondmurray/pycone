@@ -1,3 +1,4 @@
+import functools
 import pathlib
 from multiprocessing import Pool
 
@@ -17,6 +18,99 @@ from .util import add_days_since_start, read_data
 
 az.style.use("default")
 console = Console()
+
+
+class Model:
+    """Container for probability functions for a given model."""
+
+    name: str = ""
+    labels: list[str] = []
+
+    def __init__(self):
+        """Create a Model."""
+        self.ndim = len(self.labels)
+        self.data = None
+
+    def initialize(self, nwalkers: int = 32) -> np.ndarray:
+        """Generate initial positions for the MCMC walkers.
+
+        Parameters
+        ----------
+        nwalkers : int
+            Number of walkers to generate positions for
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (nwalkers, self.ndim)
+        """
+        raise NotImplementedError
+
+    def log_prior(self, theta: tuple[float, ...]) -> float:
+        """Calculate the log prior of the model.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+
+        Returns
+        -------
+        float
+            Log probability for the given model parameters
+        """
+        raise NotImplementedError
+
+    def log_likelihood_vector(
+        self,
+        theta: tuple[float, ...],
+        f: np.ndarray,
+        c: np.ndarray,
+    ) -> np.ndarray:
+        """Calculate the log likelihood for each data point (f, c) given the model parameters.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+        f : np.ndarray
+            Temperature
+        c : np.ndarray
+            Cone count
+
+        Returns
+        -------
+        np.ndarray
+            Individual probabilities of observing the data points given the model
+            parameters; the shape is the same as the shape of the input data `f` and `c`.
+        """
+        raise NotImplementedError
+
+    def posterior_predictive(
+        self,
+        theta: tuple[float, ...],
+        f: np.ndarray,
+        c: np.ndarray,
+    ) -> np.ndarray:
+        """Generate a sample from the posterior predictive distribution.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+        f : np.ndarray
+            Temperature
+        c : np.ndarray
+            Cone count
+
+        Returns
+        -------
+        np.ndarray
+            Array of data generated from the posterior predictive distribution; has the
+            same shape as the input data `f` and `c`
+
+        """
+        raise NotImplementedError
 
 
 def get_data(
@@ -155,68 +249,9 @@ def lagged(c: np.ndarray, lag: int | float) -> np.ndarray:
     return result
 
 
-def log_prior(theta: tuple[float, ...]) -> float:
-    """Compute the log prior probability.
-
-    Parameters
-    ----------
-    theta : tuple[float, ...]
-        Parameters of the model
-
-    Returns
-    -------
-    float
-        Log prior probability
-    """
-    c0, alpha, beta, width_0, width_1, lag_0, lag_1, lag_2 = theta
-
-    priors = [
-        st.randint.pmf(np.floor(c0), low=0, high=1000),
-        st.halfnorm.pdf(alpha, scale=10),
-        st.halfnorm.pdf(beta, scale=10),
-        st.randint.pmf(np.floor(width_0), low=1, high=100),
-        st.randint.pmf(np.floor(width_1), low=1, high=100),
-        st.randint.pmf(np.floor(lag_0), low=180, high=545),
-        st.randint.pmf(np.floor(lag_1), low=550, high=910),
-        st.randint.pmf(np.floor(lag_2), low=915, high=1275),
-    ]
-
-    prior = np.prod(priors)
-    if prior <= 0 or np.isnan(prior):
-        return -np.inf
-    return np.log(prior)
-
-
-def log_likelihood_vector(theta: tuple[float, ...], f: np.ndarray, c: np.ndarray) -> np.ndarray:
-    """Compute the log likelihood vector.
-
-    The nansum of this vector returns the log likelihood. Data must be contiguous.
-
-    Parameters
-    ----------
-    theta : tuple[float, ...]
-        Parameters of the model
-    f : np.ndarray
-        Temperature data
-    c : np.ndarray
-        Cone data
-
-    Returns
-    -------
-    np.ndarray
-        Array containing log-likelihood for every data point for the given theta
-    """
-    c0, alpha, beta, width_0, width_1, lag_0, lag_1, lag_2 = theta
-
-    # Each date has a different c_mu, so this vector is of shape == c.shape
-    c_mu: np.ndarray = (
-        c0 + alpha * mavg(f, width_0, lag_0) + beta * mavg(f, width_1, lag_1) - lagged(c, lag_2)
-    )
-
-    return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
-
-
-def log_probability(theta: tuple, f: np.ndarray, c: np.ndarray) -> tuple[float, np.ndarray]:
+def log_probability(
+    theta: tuple, f: np.ndarray, c: np.ndarray, model: Model
+) -> tuple[float, np.ndarray]:
     """Calculate the log posterior.
 
     See https://python.arviz.org/en/stable/getting_started/ConversionGuideEmcee.html
@@ -231,78 +266,56 @@ def log_probability(theta: tuple, f: np.ndarray, c: np.ndarray) -> tuple[float, 
         Temperature
     c : np.ndarray
         Cone number
+    model : Model
+        Model for which the log probability is to be calculated
 
     Returns
     -------
     (float, np.ndarray)
         Log posterior and pointwise log likelihood
     """
-    lp = log_prior(theta)
+    lp = model.log_prior(theta)
     if not np.isfinite(lp):
         return -np.inf, np.full((len(f),), -np.inf)
 
-    log_likelihood_vect = log_likelihood_vector(theta, f, c)
+    log_likelihood_vect = model.log_likelihood_vector(theta, f, c)
     log_likelihood = np.nansum(log_likelihood_vect)
 
     return lp + log_likelihood, log_likelihood_vect
 
 
-def run_sampler(model_name: str = "model"):
+def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
     """Run the sampler."""
     data = get_data(impute_time=True)
+
+    model.data = data
 
     f = data["t"].to_numpy()
     c = data["c"].to_numpy()
 
     np.random.default_rng(42)
-    initial = np.array(
-        [
-            10,  # c0
-            5,  # alpha
-            5,  # beta
-            10,  # width_0
-            10,  # width_1
-            200,  # lag_0
-            600,  # lag_1
-            1000,  # lag_2
-        ]
-    )
-
-    nwalkers = 32
-    ndim = len(initial)
-    pos = (
-        np.vstack(
-            (
-                st.randint.rvs(low=-5, high=5, size=nwalkers),
-                st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                st.randint.rvs(low=-10, high=10, size=nwalkers),
-                st.randint.rvs(low=-10, high=10, size=nwalkers),
-                st.randint.rvs(low=-10, high=10, size=nwalkers),
-                st.randint.rvs(low=-10, high=10, size=nwalkers),
-                st.randint.rvs(low=-10, high=10, size=nwalkers),
-            )
-        ).T
-        + initial
-    )
 
     with Pool(processes=10) as pool:
         sampler = emcee.EnsembleSampler(
-            nwalkers, ndim, log_prob_fn=log_probability, pool=pool, args=(f, c)
+            nwalkers,
+            model.ndim,
+            log_prob_fn=functools.partial(log_probability, model=model),
+            pool=pool,
+            args=(f, c),
         )
-        sampler.run_mcmc(pos, 20000, progress=True)
+        sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+
+    samples = sampler.get_chain()
+    np.save(f"posterior_samples_{model.name}.npy", samples)
 
     idata = az.from_emcee(
         sampler=sampler,
-        var_names=["c0", "alpha", "beta", "width_0", "width_1", "lag_0", "lag_1", "lag_2"],
-        arg_names=["T", "c"],
+        var_names=model.labels,
         blob_names=["log_likelihood"],
+        arg_names=["T", "c"],
+        arg_groups=["observed_data", "observed_data"],
     )
-
-    samples = sampler.get_chain()
-    np.save(f"posterior_samples_{model_name}.npy", samples)
-
-    idata.to_zarr(f"posterior_samples_{model_name}.zarr")
+    idata.to_zarr(f"posterior_samples_{model.name}.zarr")
 
 
 def sample_posterior_predictive(
@@ -360,47 +373,328 @@ def sample_posterior_predictive(
         )
 
     n_steps = data.shape[0]
-    prediction = np.zeros((n_predictions, n_steps), dtype=int)
+    posterior_predictive = np.zeros((n_predictions, n_steps), dtype=int)
     for i in tqdm.trange(n_predictions, desc="Sampling the posterior predictive distribution..."):
-        prediction[i, :] = posterior_predictive(samples[i, :], f, c)
+        posterior_predictive[i, :] = model.posterior_predictive(samples[i, :], f, c)
 
-    np.save(f"posterior_predictive_{model_name}.npy", prediction)
+    np.save(f"posterior_predictive_{model.name}.npy", posterior_predictive)
 
 
-def posterior_predictive(
-    theta: tuple[float, ...],
-    f: np.ndarray,
-    c: np.ndarray,
-) -> np.ndarray:
-    """Generate a set of independent posterior predictive samples.
+class ThreeYearsPreceedingModel(Model):
+    """Model with terms from temperature contributions for three years before the cone crop."""
 
-    Parameters
-    ----------
-    theta : tuple[float, ...]
-        Model parameter vector
-    f : np.ndarray
-        Temperature
-    c : np.ndarray
-        Cone number
+    name = "three_years_preceeding"
+    labels = [
+        "c0",
+        "alpha",
+        "beta",
+        "gamma",
+        "width_alpha",
+        "width_beta",
+        "width_gamma",
+        "lag_alpha",
+        "lag_beta",
+        "lag_gamma",
+        "lag_last_cone",
+    ]
 
-    Returns
-    -------
-    np.ndarray
-        Time series (same shape as `f` and `c`) of independent cone predictions
-    """
-    c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+    def initialize(self, nwalkers: int = 32) -> np.ndarray:
+        """Generate initial positions for the MCMC walkers.
 
-    c_mu: np.ndarray = (
-        c0
-        + alpha * mavg(f, width_alpha, lag_alpha)
-        + beta * mavg(f, width_beta, lag_beta)
-        - lagged(c, lag_last_cone)
-    )
-    return st.poisson.rvs(c_mu)
+        Parameters
+        ----------
+        nwalkers : int
+            Number of walkers to generate positions for
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (nwalkers, self.ndim)
+        """
+        initial = np.array(
+            [
+                10,  # c0
+                5,  # alpha
+                5,  # beta
+                5,  # gamma
+                10,  # width_alpha
+                10,  # width_beta
+                10,  # width_gamma
+                365,  # lag_alpha
+                730,  # lag_beta
+                1095,  # lag_gamma
+                1000,  # lag_last_cone
+            ]
+        )
+
+        return (
+            np.vstack(
+                (
+                    st.randint.rvs(low=-5, high=5, size=nwalkers),  # c0
+                    st.norm.rvs(loc=10, scale=1, size=nwalkers),  # alpha
+                    st.norm.rvs(loc=10, scale=1, size=nwalkers),  # beta
+                    st.norm.rvs(loc=10, scale=1, size=nwalkers),  # gamma
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # width_alpha
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # width_beta
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # width_gamma
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_alpha
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_beta
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_gamma
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_last_cone
+                )
+            ).T
+            + initial
+        )
+
+    def log_prior(self, theta: tuple[float, ...]) -> float:
+        """Compute the log prior probability.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        float
+            Log prior probability
+        """
+        (
+            c0,
+            alpha,
+            beta,
+            gamma,
+            width_alpha,
+            width_beta,
+            width_gamma,
+            lag_alpha,
+            lag_beta,
+            lag_gamma,
+            lag_last_cone,
+        ) = theta
+
+        priors = [
+            st.randint.pmf(np.floor(c0), low=0, high=1000),
+            st.halfnorm.pdf(alpha, scale=10),
+            st.halfnorm.pdf(beta, scale=10),
+            st.halfnorm.pdf(gamma, scale=10),
+            st.randint.pmf(np.floor(width_alpha), low=1, high=100),
+            st.randint.pmf(np.floor(width_beta), low=1, high=100),
+            st.randint.pmf(np.floor(width_gamma), low=1, high=100),
+            st.randint.pmf(np.floor(lag_alpha), low=185, high=545),
+            st.randint.pmf(np.floor(lag_beta), low=550, high=910),
+            st.randint.pmf(np.floor(lag_gamma), low=915, high=1275),
+            st.randint.pmf(np.floor(lag_last_cone), low=915, high=1275),
+        ]
+
+        prior = np.prod(priors)
+        if prior <= 0 or np.isnan(prior):
+            return -np.inf
+        return np.log(prior)
+
+    def log_likelihood_vector(
+        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
+    ) -> np.ndarray:
+        """Compute the log likelihood vector.
+
+        The nansum of this vector returns the log likelihood. Data must be contiguous.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+        f : np.ndarray
+            Temperature data
+        c : np.ndarray
+            Cone data
+
+        Returns
+        -------
+        np.ndarray
+            Array containing log-likelihood for every data point for the given theta
+        """
+        (
+            c0,
+            alpha,
+            beta,
+            gamma,
+            width_alpha,
+            width_beta,
+            width_gamma,
+            lag_alpha,
+            lag_beta,
+            lag_gamma,
+            lag_last_cone,
+        ) = theta
+
+        # Each date has a different c_mu, so this vector is of shape == c.shape
+        c_mu: np.ndarray = (
+            c0
+            + alpha * mavg(f, width_alpha, lag_alpha)
+            + beta * mavg(f, width_beta, lag_beta)
+            + gamma * mavg(f, width_gamma, lag_gamma)
+            - lagged(c, lag_last_cone)
+        )
+
+        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+
+
+class TwoYearsPreceedingModel(Model):
+    """A model with terms for 1 and 2 years preceeding a cone crop."""
+
+    name = "no_gamma"
+    labels = [
+        "c0",
+        "alpha",
+        "beta",
+        "width_alpha",
+        "width_beta",
+        "lag_alpha",
+        "lag_beta",
+        "lag_last_cone",
+    ]
+
+    def initialize(self, nwalkers: int = 32) -> np.ndarray:
+        """Generate initial positions for the MCMC walkers.
+
+        Parameters
+        ----------
+        nwalkers : int
+            Number of walkers to generate positions for
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (nwalkers, self.ndim)
+        """
+        initial = np.array(
+            [
+                10,  # c0
+                5,  # alpha
+                5,  # beta
+                10,  # width_alpha
+                10,  # width_beta
+                200,  # lag_alpha
+                600,  # lag_beta
+                1000,  # lag_last_cone
+            ]
+        )
+
+        return (
+            np.vstack(
+                (
+                    st.randint.rvs(low=-5, high=5, size=nwalkers),
+                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
+                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),
+                    st.randint.rvs(low=-10, high=10, size=nwalkers),
+                )
+            ).T
+            + initial
+        )
+
+    def log_prior(self, theta: tuple[float, ...]) -> float:
+        """Compute the log prior probability.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        float
+            Log prior probability
+        """
+        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+
+        priors = [
+            st.randint.pmf(np.floor(c0), low=0, high=1000),
+            st.halfnorm.pdf(alpha, scale=10),
+            st.halfnorm.pdf(beta, scale=10),
+            st.randint.pmf(np.floor(width_alpha), low=1, high=100),
+            st.randint.pmf(np.floor(width_beta), low=1, high=100),
+            st.randint.pmf(np.floor(lag_alpha), low=180, high=545),
+            st.randint.pmf(np.floor(lag_beta), low=550, high=910),
+            st.randint.pmf(np.floor(lag_last_cone), low=915, high=1275),
+        ]
+
+        prior = np.prod(priors)
+        if prior <= 0 or np.isnan(prior):
+            return -np.inf
+        return np.log(prior)
+
+    def log_likelihood_vector(
+        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
+    ) -> np.ndarray:
+        """Compute the log likelihood vector.
+
+        The nansum of this vector returns the log likelihood. Data must be contiguous.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+        f : np.ndarray
+            Temperature data
+        c : np.ndarray
+            Cone data
+
+        Returns
+        -------
+        np.ndarray
+            Array containing log-likelihood for every data point for the given theta
+        """
+        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+
+        # Each date has a different c_mu, so this vector is of shape == c.shape
+        c_mu: np.ndarray = (
+            c0
+            + alpha * mavg(f, width_alpha, lag_alpha)
+            + beta * mavg(f, width_beta, lag_beta)
+            - lagged(c, lag_last_cone)
+        )
+
+        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+
+    def posterior_predictive(
+        self,
+        theta: tuple[float, ...],
+        f: np.ndarray,
+        c: np.ndarray,
+    ) -> np.ndarray:
+        """Generate a set of independent posterior predictive samples.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Model parameter vector
+        f : np.ndarray
+            Temperature
+        c : np.ndarray
+            Cone number
+
+        Returns
+        -------
+        np.ndarray
+            Time series (same shape as `f` and `c`) of independent cone predictions
+        """
+        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+
+        c_mu: np.ndarray = (
+            c0
+            + alpha * mavg(f, width_alpha, lag_alpha)
+            + beta * mavg(f, width_beta, lag_beta)
+            - lagged(c, lag_last_cone)
+        )
+        return st.poisson.rvs(c_mu)
 
 
 def plot_chains(
-    model_name: str,
+    model: Model,
     chains: str | np.ndarray | None = None,
     fig: plt.Figure | None = None,
     burn_in: int = 6000,
@@ -409,9 +703,9 @@ def plot_chains(
 
     Parameters
     ----------
-    model_name: str
-        Name of the model to plot
-    chains : str | np.ndarray
+    model : Model
+        Model to plot
+    chains : str | np.ndarray | None
         Sample chains
     fig : plt.Figure | None
         Figure in which to plot; if None, a new figure is returned
@@ -423,34 +717,21 @@ def plot_chains(
     plt.Figure
         The plot of the chains for each dimension
     """
-    if fig is None:
-        fig = plt.figure()
-
     if chains is None:
-        chains = f"posterior_samples_{model_name}.npy"
+        chains = f"posterior_samples_{model.name}.npy"
 
     if isinstance(chains, str):
         chains = np.load(chains)
 
-    tarmac.walker_trace(
-        fig,
-        chains[burn_in:, :, :],
-        labels=[
-            "c0",
-            "alpha",
-            "beta",
-            "width_0",
-            "width_1",
-            "lag_0",
-            "lag_1",
-            "lag_2",
-        ],
-    )
+    if fig is None:
+        fig = plt.figure()
+
+    tarmac.walker_trace(fig, chains[burn_in:, :, :], labels=model.labels)
     return fig
 
 
 def plot_corner(
-    model_name: str,
+    model: Model,
     chains: str | np.ndarray | None = None,
     fig: plt.Figure | None = None,
     burn_in: int = 6000,
@@ -459,10 +740,10 @@ def plot_corner(
 
     Parameters
     ----------
-    model_name: str
-        Name of the model to plot
-    chains : str | np.ndarray
-        MCMC sample chains
+    model : Model
+        Model to plot
+    chains : str | np.ndarray | None
+        Posterior sample chains
     fig : plt.Figure | None
         Figure in which to plot; if None, a new figure is generated
     burn_in : int
@@ -473,35 +754,21 @@ def plot_corner(
     plt.Figure
         The corner plot
     """
-    if fig is None:
-        fig = plt.figure()
-
     if chains is None:
-        chains = f"posterior_samples_{model_name}.npy"
+        chains = f"posterior_samples_{model.name}.npy"
 
     if isinstance(chains, str):
         chains = np.load(chains)
 
-    tarmac.corner_plot(
-        fig,
-        chains[burn_in:, :, :],
-        labels=[
-            "c0",
-            "alpha",
-            "beta",
-            "width_0",
-            "width_1",
-            "lag_0",
-            "lag_1",
-            "lag_2",
-        ],
-    )
+    if fig is None:
+        fig = plt.figure()
+
+    tarmac.corner_plot(fig, chains[burn_in:, :, :], labels=model.labels)
     return fig
 
 
 def plot_posterior_predictive(
-    model_name: str = "model",
-    data: pd.DataFrame | None = None,
+    model: Model,
     posterior_predictive: np.ndarray | str | None = None,
     fig: plt.Figure | None = None,
 ) -> plt.Figure:
@@ -509,29 +776,24 @@ def plot_posterior_predictive(
 
     Parameters
     ----------
-    model_name : str
-        Name of the model
-    data : pd.DataFrame | None
-        Observed data
+    model : Model
+        Model for which posterior predictive samples were generated
     posterior_predictive : np.ndarray | str | None
-        Posterior predictive samples
+        Samples from the posterior predictive distribution
     fig : plt.Figure | None
-        Figure in which to plot
+        Figure in which the samples should be plotted
 
     Returns
     -------
     plt.Figure
-        Figure containing one Axes per prediction; each axis shows
-        a full time series for a sample of the model parameters
-    """
-    if data is None:
-        data = get_data(impute_time=True)
+        Figure containing plots of posterior predictive samples
 
+    """
     if fig is None:
         fig = plt.figure()
 
     if posterior_predictive is None:
-        posterior_predictive = f"posterior_predictive_{model_name}.npy"
+        posterior_predictive = f"posterior_predictive_{model.name}.npy"
 
     if isinstance(posterior_predictive, str):
         posterior_predictive = np.load(posterior_predictive)
@@ -544,15 +806,40 @@ def plot_posterior_predictive(
 
     for i in range(npredictions):
         axes[i].plot(posterior_predictive[i, :], "-r", label="predicted")
-        axes[i].plot(data["c"], "-k", label="measured")
+        axes[i].plot(model.data["c"], "-k", label="measured")
 
     axes[0].legend()
     return fig
 
 
+def plot_figures(
+    model: Model,
+    chains: str | np.ndarray | None = None,
+    burn_in: int = 16000,
+):
+    """Plot the walker trace and corner plot.
+
+    Parameters
+    ----------
+    model : Model
+        Model to display
+    chains : str | np.ndarray | None
+        Posterior sample chains
+    burn_in : int
+        Number of samples to ignore from the front of the dataset
+    """
+    if chains is None:
+        chains = f"posterior_samples_{model.name}.npy"
+
+    if isinstance(chains, str):
+        chains = np.load(chains)
+
+    plot_chains(model, burn_in=0)
+    plot_corner(model, burn_in=burn_in)
+
+
 if __name__ == "__main__":
-    model_name = "no_gamma"
-    run_sampler(model_name)
-    plot_chains(model_name, burn_in=0)
-    plot_corner(model_name, burn_in=16000)
+    model = TwoYearsPreceedingModel()
+    run_sampler(model, nwalkers=32, nsamples=20000)
+    plot_figures(model, burn_in=16000)
     plt.show()
