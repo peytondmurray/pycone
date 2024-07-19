@@ -1,5 +1,7 @@
 import functools
 import pathlib
+import sys
+import warnings
 from multiprocessing import Pool
 
 import arviz as az
@@ -18,6 +20,10 @@ from .util import add_days_since_start, read_data
 
 az.style.use("default")
 console = Console()
+
+
+if not sys.warnoptions:
+    warnings.simplefilter("ignore", RuntimeWarning)
 
 
 class Model:
@@ -294,7 +300,6 @@ def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
     c = data["c"].to_numpy()
 
     np.random.default_rng(42)
-
     with Pool(processes=10) as pool:
         sampler = emcee.EnsembleSampler(
             nwalkers,
