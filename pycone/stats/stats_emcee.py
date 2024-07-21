@@ -620,7 +620,7 @@ class ScaledTwoYearsPreceedingModel(Model):
                     st.norm.rvs(loc=10, scale=1, size=nwalkers),
                     st.norm.rvs(loc=10, scale=1, size=nwalkers),
                     st.uniform.rvs(loc=-0.1, scale=0.3, size=nwalkers),
-                    st.uniform.rvs(low=-0.1, scale=0.3, size=nwalkers),
+                    st.uniform.rvs(loc=-0.1, scale=0.3, size=nwalkers),
                     st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
                     st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
                     st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
@@ -1084,6 +1084,6 @@ def plot_figures(
 
 if __name__ == "__main__":
     model = ScaledTwoYearsPreceedingModel()
-    run_sampler(model, nwalkers=32, nsamples=20000)
-    # plot_figures(model, burn_in=16000)
-    # plt.show()
+    # run_sampler(model, nwalkers=32, nsamples=20000)
+    plot_figures(model, burn_in=16000)
+    plt.show()
