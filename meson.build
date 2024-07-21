@@ -29,11 +29,19 @@ py.install_sources(
     'pycone/preprocess.py',
     'pycone/output.py',
     'pycone/util.py',
-    'pycone/stats.py',
-    'pycone/stats_emcee.py'
   ],
   subdir: 'pycone',
-  pure: false
+  pure: false,
+)
+
+py.install_sources(
+  [
+    'pycone/stats/__init__.py',
+    'pycone/stats/stats_pymc.py',
+    'pycone/stats/stats_emcee.py'
+  ],
+  subdir: 'pycone/stats',
+  pure: false,
 )
 
 install_data(

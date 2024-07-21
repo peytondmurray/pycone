@@ -12,7 +12,7 @@ from pytensor.compile.sharedvalue import SharedVariable
 from pytensor.tensor import conv
 from rich.console import Console
 
-from .util import add_days_since_start, df_to_rich, read_data
+from ..util import add_days_since_start, df_to_rich, read_data
 
 plt.style.use("dark_background")
 console = Console()

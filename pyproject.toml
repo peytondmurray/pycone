@@ -34,6 +34,8 @@ dependencies = [
     "rich",
     "pyside6",
     "pymc",
+    "emcee",
+    "tarmac",
 ]
 
 [project.urls]
