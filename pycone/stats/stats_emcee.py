@@ -6,6 +6,7 @@ from multiprocessing import Pool
 
 import arviz as az
 import emcee
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -300,14 +301,29 @@ def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
     c = data["c"].to_numpy()
 
     sampler_path = f"{model.name}_sampler.h5"
-    backend = emcee.backends.HDFBackend(f"{model.name}_sampler.h5")
 
     if pathlib.Path(sampler_path).exists():
+        # Get the number of existing runs in the file
+        with h5py.File(sampler_path, "r") as file:
+            runs = list(file.keys())
+
+        backend = emcee.backends.HDFBackend(
+            f"{model.name}_sampler.h5",
+            name=f"mcmc_{len(runs)}",
+        )
+        old_backend = emcee.backends.HDFBackend(
+            f"{model.name}_sampler.h5",
+            name=f"mcmc_{len(runs) - 1}",
+        )
         console.log(
-            f"Existing emcee sampler loaded from {model.name}_sampler.h5. "
-            f"Existing samples: {backend.get_chain().shape[0]}"
+            f"Existing emcee sampler loaded from {model.name}_sampler.h5;"
+            f"Existing samples: {old_backend.iteration}"
         )
     else:
+        backend = emcee.backends.HDFBackend(
+            f"{model.name}_sampler.h5",
+            name="mcmc_0",
+        )
         console.log(f"No emcee sampler found at {model.name}_sampler.h5; starting new sampler.")
         backend.reset(nwalkers, model.ndim)
 
@@ -606,40 +622,21 @@ class ScaledThreeYearsPreceedingModel(Model):
         np.ndarray
             Array of shape (nwalkers, self.ndim)
         """
-        initial = np.array(
-            [
-                10,  # c0
-                5,  # alpha
-                5,  # beta
-                5,  # gamma
-                0.1,  # width_alpha
-                0.1,  # width_beta
-                0.1,  # width_gamma
-                1,  # lag_alpha
-                2,  # lag_beta
-                3,  # lag_gamma
-                3,  # lag_last_cone
-            ]
-        )
-
-        return (
-            np.vstack(
-                (
-                    st.uniform.rvs(loc=-5, scale=5, size=nwalkers),
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                    st.uniform.rvs(loc=-0.1, scale=0.3, size=nwalkers),
-                    st.uniform.rvs(loc=-0.1, scale=0.3, size=nwalkers),
-                    st.uniform.rvs(loc=-0.1, scale=0.3, size=nwalkers),
-                    st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
-                    st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
-                    st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
-                    st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
-                )
-            ).T
-            + initial
-        )
+        return np.vstack(
+            (
+                st.uniform.rvs(loc=0, scale=500, size=nwalkers),  # c0
+                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # alpha
+                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # beta
+                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # gamma
+                st.uniform.rvs(loc=0.01, scale=0.3, size=nwalkers),  # width_alpha
+                st.uniform.rvs(loc=0.01, scale=0.3, size=nwalkers),  # width_beta
+                st.uniform.rvs(loc=0.01, scale=0.3, size=nwalkers),  # width_gamma
+                st.uniform.rvs(loc=0.5, scale=1, size=nwalkers),  # lag_alpha
+                st.uniform.rvs(loc=1.5, scale=1, size=nwalkers),  # lag_beta
+                st.uniform.rvs(loc=2.5, scale=1, size=nwalkers),  # lag_gamma
+                st.uniform.rvs(loc=1, scale=5, size=nwalkers),  # lag_last_cone
+            )
+        ).T
 
     def log_prior(self, theta: tuple[float, ...]) -> float:
         """Compute the log prior probability.
@@ -673,13 +670,13 @@ class ScaledThreeYearsPreceedingModel(Model):
             st.halfnorm.pdf(alpha, scale=10),
             st.halfnorm.pdf(beta, scale=10),
             st.halfnorm.pdf(gamma, scale=10),
-            st.uniform.pdf(width_alpha, loc=0, scale=1),
-            st.uniform.pdf(width_beta, loc=0, scale=1),
-            st.uniform.pdf(width_gamma, loc=0, scale=1),
+            st.uniform.pdf(width_alpha, loc=0.01, scale=0.3),
+            st.uniform.pdf(width_beta, loc=0.01, scale=0.3),
+            st.uniform.pdf(width_gamma, loc=0.01, scale=0.3),
             st.uniform.pdf(lag_alpha, loc=0.5, scale=1),
             st.uniform.pdf(lag_beta, loc=1.5, scale=1),
             st.uniform.pdf(lag_gamma, loc=2.5, scale=1),
-            st.uniform.pdf(lag_last_cone, loc=2.5, scale=1),
+            st.uniform.pdf(lag_last_cone, loc=1, scale=5),
         ]
 
         prior = np.prod(priors)
@@ -1347,12 +1344,12 @@ def plot_figures(
         Number of samples to ignore from the front of the dataset
     """
     if chains is None:
-        chains = emcee.backends.HDFBackend(f"{model.name}_sampler.h5").get_chain()
+        chains = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0").get_chain()
     elif isinstance(chains, str):
         chains = emcee.backends.HDFBackend(chains).get_chain()
 
-    plot_chains(model, burn_in=0)
-    plot_corner(model, burn_in=burn_in)
+    plot_chains(model, chains, burn_in=0)
+    plot_corner(model, chains, burn_in=burn_in)
 
 
 if __name__ == "__main__":
