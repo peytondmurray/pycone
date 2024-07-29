@@ -463,40 +463,21 @@ class ThreeYearsPreceedingModel(Model):
         np.ndarray
             Array of shape (nwalkers, self.ndim)
         """
-        initial = np.array(
-            [
-                10,  # c0
-                5,  # alpha
-                5,  # beta
-                5,  # gamma
-                10,  # width_alpha
-                10,  # width_beta
-                10,  # width_gamma
-                365,  # lag_alpha
-                730,  # lag_beta
-                1095,  # lag_gamma
-                1000,  # lag_last_cone
-            ]
-        )
-
-        return (
-            np.vstack(
-                (
-                    st.randint.rvs(low=-5, high=5, size=nwalkers),  # c0
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),  # alpha
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),  # beta
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),  # gamma
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # width_alpha
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # width_beta
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # width_gamma
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_alpha
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_beta
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_gamma
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),  # lag_last_cone
-                )
-            ).T
-            + initial
-        )
+        return np.vstack(
+            (
+                st.norm.rvs(loc=20, scale=5, size=nwalkers),  # c0
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # alpha
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # beta
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # gamma
+                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_alpha
+                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_beta
+                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_gamma
+                st.norm.rvs(loc=365, scale=5, size=nwalkers),  # lag_alpha
+                st.norm.rvs(loc=730, scale=5, size=nwalkers),  # lag_beta
+                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_gamma
+                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_last_cone
+            )
+        ).T
 
     def log_prior(self, theta: tuple[float, ...]) -> float:
         """Compute the log prior probability.
@@ -526,17 +507,17 @@ class ThreeYearsPreceedingModel(Model):
         ) = theta
 
         priors = [
-            st.randint.pmf(np.floor(c0), low=0, high=1000),
+            st.uniform.pdf(c0, loc=0, scale=1000),
             st.halfnorm.pdf(alpha, scale=10),
             st.halfnorm.pdf(beta, scale=10),
             st.halfnorm.pdf(gamma, scale=10),
-            st.randint.pmf(np.floor(width_alpha), low=1, high=100),
-            st.randint.pmf(np.floor(width_beta), low=1, high=100),
-            st.randint.pmf(np.floor(width_gamma), low=1, high=100),
-            st.randint.pmf(np.floor(lag_alpha), low=185, high=545),
-            st.randint.pmf(np.floor(lag_beta), low=550, high=910),
-            st.randint.pmf(np.floor(lag_gamma), low=915, high=1275),
-            st.randint.pmf(np.floor(lag_last_cone), low=915, high=1275),
+            st.uniform.pdf(width_alpha, loc=1, scale=100),
+            st.uniform.pdf(width_beta, loc=1, scale=100),
+            st.uniform.pdf(width_gamma, loc=1, scale=100),
+            st.uniform.pdf(lag_alpha, loc=185, scale=365),
+            st.uniform.pdf(lag_beta, loc=550, scale=365),
+            st.uniform.pdf(lag_gamma, loc=915, scale=365),
+            st.uniform.pdf(lag_last_cone, loc=915, scale=365),
         ]
 
         prior = np.prod(priors)
@@ -582,13 +563,73 @@ class ThreeYearsPreceedingModel(Model):
         # Each date has a different c_mu, so this vector is of shape == c.shape
         c_mu: np.ndarray = (
             c0
-            + alpha * mavg(f, width_alpha, lag_alpha)
-            + beta * mavg(f, width_beta, lag_beta)
-            + gamma * mavg(f, width_gamma, lag_gamma)
-            - lagged(c, lag_last_cone)
+            + alpha * self.mavg(f, width_alpha, lag_alpha)
+            + beta * self.mavg(f, width_beta, lag_beta)
+            + gamma * self.mavg(f, width_gamma, lag_gamma)
+            - self.lagged(c, lag_last_cone)
         )
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+
+    def mavg(self, f: np.ndarray, width: float | int, lag: float | int) -> np.ndarray:
+        """Calculate a lagged moving average of the dataset.
+
+        Parameters
+        ----------
+        f : np.ndarray
+            Data to calculate a lagged moving average of
+        width : float | int
+            The moving average is calculated by convolution with a flat kernel
+            of size 2*width + 1 (so the moving average is always centered on the
+            original data point). Floats are cast to int first
+        lag : float | int
+            Number of days to shift the moving average
+
+        Returns
+        -------
+        np.ndarray
+            Lagged moving average of `f`. The shape is the same as `f`, but values
+            at the edge of the dataset are set to `np.nan`
+        """
+        width = int(width)
+        lag = int(lag)
+
+        window = 2 * width + 1
+        average = np.convolve(f, np.ones(shape=(window,), dtype=float), mode="same") / window
+
+        # Mask off the convolution at the edge
+        average[:width] = np.nan
+        average[-width:] = np.nan
+
+        result = np.full_like(f, np.nan, dtype=float)
+        result[:-lag] = average[lag:]
+        return result
+
+    def lagged(self, c: np.ndarray, lag: int | float) -> np.ndarray:
+        """Shift the array `c` by `lag` number of days backward.
+
+        That is,
+
+            c[i] = lagged(c, lag)[i - lag]
+
+        Parameters
+        ----------
+        c : np.ndarray
+            Time series data to shift
+        lag : int | float
+            Magnitude of the shift, in days. Floats are cast to int first
+
+        Returns
+        -------
+        np.ndarray
+            An array which is the same shape as `c` but shifted by `lag` days.
+            Values at the edge of the dataset are set to `np.nan`
+        """
+        lag = int(lag)
+
+        result = np.full_like(c, np.nan, dtype=float)
+        result[:-lag] = c[lag:]
+        return result
 
 
 class ScaledThreeYearsPreceedingModel(Model):
@@ -624,17 +665,17 @@ class ScaledThreeYearsPreceedingModel(Model):
         """
         return np.vstack(
             (
-                st.uniform.rvs(loc=0, scale=500, size=nwalkers),  # c0
-                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # alpha
-                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # beta
-                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # gamma
-                st.uniform.rvs(loc=0.01, scale=0.3, size=nwalkers),  # width_alpha
-                st.uniform.rvs(loc=0.01, scale=0.3, size=nwalkers),  # width_beta
-                st.uniform.rvs(loc=0.01, scale=0.3, size=nwalkers),  # width_gamma
-                st.uniform.rvs(loc=0.5, scale=1, size=nwalkers),  # lag_alpha
-                st.uniform.rvs(loc=1.5, scale=1, size=nwalkers),  # lag_beta
-                st.uniform.rvs(loc=2.5, scale=1, size=nwalkers),  # lag_gamma
-                st.uniform.rvs(loc=1, scale=5, size=nwalkers),  # lag_last_cone
+                st.norm.rvs(loc=20, scale=5, size=nwalkers),  # c0
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # alpha
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # beta
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # gamma
+                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_alpha
+                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_beta
+                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_gamma
+                st.norm.rvs(loc=365, scale=5, size=nwalkers),  # lag_alpha
+                st.norm.rvs(loc=730, scale=5, size=nwalkers),  # lag_beta
+                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_gamma
+                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_last_cone
             )
         ).T
 
@@ -1353,7 +1394,7 @@ def plot_figures(
 
 
 if __name__ == "__main__":
-    model = ScaledThreeYearsPreceedingModel()
+    model = ThreeYearsPreceedingModel()
     # run_sampler(model, nwalkers=32, nsamples=20000)
-    plot_figures(model, burn_in=16000)
+    plot_figures(model, burn_in=17500)
     plt.show()
