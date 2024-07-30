@@ -12,6 +12,7 @@ from pytensor.compile.sharedvalue import SharedVariable
 from pytensor.tensor import conv
 from rich.console import Console
 
+from .preprocess import load_data
 from .util import add_days_since_start, df_to_rich, read_data
 
 plt.style.use("dark_background")
@@ -42,6 +43,7 @@ def get_data(
     weather_path: str = "weather.csv",
     cones_path: str = "cones.csv",
     impute_time: bool = False,
+    site: int = 1,
 ) -> pd.DataFrame:
     """Get the cone and weather data.
 
@@ -57,9 +59,10 @@ def get_data(
 
     cones_path : str
         Path to the raw cone data
-
     impute_time : bool
         If true, nan-valued data will be imputed for missing date ranges.
+    site : int
+        Site number to select. Currently, only data from a single site at a time is fit
 
     Returns
     -------
@@ -76,15 +79,19 @@ def get_data(
         observed dataset. Many dates have no measured values, and thus have a
         lot of nan values. This makes moving average computations easier later on.
     """
-    if pathlib.Path("observed.csv").exists():
-        console.log(f"[bold yellow]Loading existing data at {weather_path}")
-        observed = read_data("observed.csv")
+    fname = f"observed_site_{site}.csv"
+    if pathlib.Path(fname).exists():
+        console.log(f"[bold yellow]Loading existing data at {fname}")
+        observed = read_data(fname)
     else:
-        # Convert year+ordinal day of year to just day since the start of the dataset
-        site = 1
-        weather = read_data(weather_path).rename(columns={"tmean (degrees f)": "t"})
-        cones = read_data(cones_path)
+        if pathlib.Path(weather_path).exists() and pathlib.Path(cones_path).exists():
+            # Convert year+ordinal day of year to just day since the start of the dataset
+            weather = read_data(weather_path)
+            cones = read_data(cones_path)
+        else:
+            cones, weather = load_data()
 
+        weather = weather.rename(columns={"tmean (degrees f)": "t"})
         weather = weather.loc[weather["site"] == site]
         cones = cones.loc[cones["site"] == site]
 
@@ -94,7 +101,7 @@ def get_data(
         observed = add_days_since_start(observed, doy_col="day_of_year")[
             ["year", "day_of_year", "days_since_start", "t", "cones"]
         ]
-        observed.to_csv("observed.csv", index=False)
+        observed.to_csv(fname, index=False)
 
     obs = observed.rename(columns={"cones": "c"})
 
@@ -106,10 +113,10 @@ def get_data(
     return obs
 
 
-def moving_average(
+def mavg_conv(
     t: SharedVariable,
-    half_width: pm.Discrete,
-    lag: pm.Discrete,
+    half_width: pm.Continuous,
+    lag: pm.Continuous,
 ) -> pt.tensor.TensorLike:
     """Compute the moving average temperature.
 
@@ -127,21 +134,21 @@ def moving_average(
     pt.tensor.TensorLike
         Lagged moving average temperature
     """
-    width = 2 * half_width + 1
+    half_width_int = pm.pytensorf.intX(half_width)
+    width = 2 * half_width_int + 1
     # Reshape into 4d arrays to make conv2d happy; then flatten post-convolution to original dims
     kernel_4d = (pm.math.ones((width,), dtype=float) / width).reshape((1, 1, 1, -1))
     temperature_4d = t.reshape((1, 1, 1, -1))
     result = pm.math.full_like(t, np.nan, dtype=float)
 
     result = pt.tensor.set_subtensor(
-        result[half_width:-half_width],
+        result[half_width_int:-half_width_int],
         conv.conv2d(temperature_4d, kernel_4d, border_mode="valid").flatten(),
     )
-    return result
-    # return lagged(result, lag)
+    return lagged(result, lag)
 
 
-def lagged(data: SharedVariable, lag: pm.Discrete) -> pt.tensor.TensorLike:
+def lagged(data: SharedVariable, lag: pm.Continuous) -> pt.tensor.TensorLike:
     """Lag an array by some amount.
 
     Parameters
@@ -156,11 +163,12 @@ def lagged(data: SharedVariable, lag: pm.Discrete) -> pt.tensor.TensorLike:
     pt.tensor.TensorLike
         Lagged dataset
     """
-    result = pm.math.full_like(data, -np.inf, dtype=float)
-    return pt.tensor.set_subtensor(result[:-lag], data[lag:])
+    lagged_data = pm.math.full((data.shape[0],), np.nan, dtype=float)
+    lag_int = pm.pytensorf.intX(lag)
+    return pt.tensor.set_subtensor(lagged_data[:-lag_int], data[lag_int:])
 
 
-def mavg(
+def mavg_scan(
     t: SharedVariable,
     half_width: pm.Discrete,
     lag: pm.Discrete,
@@ -197,7 +205,7 @@ def forward_moving_average(i: int, t: SharedVariable, width: pm.Discrete):
     return pm.math.switch(i + width < t.shape[0], t[i : i + width].mean(), np.nan)
 
 
-def run_simple_model():
+def runmodel():
     # Likelihood is going to be poisson-distributed for each site; there's a waiting time
     # distribution for each cone appearing in the stand. There are few enough cones produced for
     # some species that summing them together (for the stand) will not produce a normal
@@ -205,39 +213,41 @@ def run_simple_model():
     data = get_data(impute_time=False)
 
     with pm.Model() as model:
-        days_since_start_data = pm.Data("days_since_start_data", data["days_since_start"])
-        t_data = pm.Data("t_data", data["t"])
-        c_data = pm.Data("c_data", data["c"])
+        d_data = pm.MutableData("days_since_start_data", data["days_since_start"])
+        t_data = pm.MutableData("t_data", data["t"])
+        c_data = pm.MutableData("c_data", data["c"])
 
-        # Uninformative uniform prior for the initial number c.
-        c0 = pm.DiscreteUniform("c0", lower=0, upper=1000)
-
+        # Priors
+        c0 = pm.Uniform("c0", lower=0, upper=1000)
         alpha = pm.HalfNormal("alpha", sigma=10)
-        # beta = pm.HalfNormal("beta", sigma=10)
-        # gamma = pm.HalfNormal("gamma", sigma=10)
-        half_width_0 = pm.DiscreteUniform("width_0", 1, 100)
-        # half_width_1 = pm.DiscreteUniform("width_1", 1, 100)
-        lag_0 = pm.DiscreteUniform("lag_0", lower=180, upper=545)
-        # lag_1 = pm.DiscreteUniform("lag_1", lower=550, upper=910)
-        # lag_2 = pm.DiscreteUniform("lag_2", lower=915, upper=1275)
+        beta = pm.HalfNormal("beta", sigma=10)
+        gamma = pm.HalfNormal("gamma", sigma=10)
+        width_alpha = pm.Uniform("width_alpha", lower=1, upper=100)
+        width_beta = pm.Uniform("width_beta", lower=1, upper=100)
+        width_gamma = pm.Uniform("width_gamma", lower=1, upper=100)
+        lag_alpha = pm.Uniform("lag_alpha", lower=180, upper=545)
+        lag_beta = pm.Uniform("lag_beta", lower=550, upper=910)
+        lag_gamma = pm.Uniform("lag_gamma", lower=915, upper=1275)
+        lag_last_cone = pm.Uniform("lag_last_cone", lower=915, upper=1275)
 
-        avg_t0 = pm.Deterministic("avg_t0", mavg(t_data, half_width_0, lag_0))
-        # avg_t0 = pm.Deterministic("avg_t0", moving_average(t_data, half_width_0, lag_0))
-        # avg_t1 = pm.Deterministic("avg_t1", moving_average(t_data, half_width_1, lag_1))
-        # lagged_c = pm.Deterministic("lagged_c", lagged(c_data, lag_2))
-
-        avg_t0_masked = pm.Deterministic(
-            "avg_t0_masked",
-            pm.math.switch(
-                pt.tensor.isnan(avg_t0),
-                pm.math.zeros_like(avg_t0),
-                avg_t0,
-            ),
+        c_mu = pm.Deterministic(
+            "c_mu",
+            c0
+            + alpha * pm.Deterministic("avg_t_alpha", mavg_conv(t_data, width_alpha, lag_alpha))
+            + beta * pm.Deterministic("avg_t_beta", mavg_conv(t_data, width_beta, lag_beta))
+            + gamma * pm.Deterministic("avg_t_gamma", mavg_conv(t_data, width_gamma, lag_gamma))
+            - pm.Deterministic("last_cone", lagged(c_data, lag_last_cone)),
         )
 
-        c_mu = pm.Deterministic("c_mu", c0 + alpha * avg_t0_masked)
-
-        c_model = pm.Poisson("c_model", mu=c_mu, observed=c_data)
+        pm.Poisson(
+            "c_model",
+            mu=pm.math.switch(
+                pm.math.or_(pt.tensor.math.isnan(c_mu), pt.tensor.math.isnan(c_data)),
+                0,
+                c_mu,
+            ),
+            observed=c_data,
+        )
 
         render_to_terminal(model)
         idata = pm.sample(discard_tuned_samples=False)
@@ -256,6 +266,7 @@ def run_simple_model():
         label="observed",
         ax=ax,
     )
+
     # az.plot_dist(
     #     prior_samples.prior_predictive["cones"],
     #     kind="hist",
@@ -275,115 +286,9 @@ def run_simple_model():
     plt.show()
 
 
-# def calc_mavg(data, half_width):
-#     width = 2 * half_width + 1
-#     # Reshape into 4d arrays to make conv2d happy; then flatten post-convolution to original dims
-#     kernel_4d = (pm.math.ones((width,), dtype=float) / width).reshape((1, 1, 1, -1))
-#     temperature_4d = data.reshape((1, 1, 1, -1))
-#     result = pm.math.full_like(data, np.nan, dtype=float)
-#
-#     result = pt.tensor.set_subtensor(
-#         result[half_width:-half_width],
-#         conv.conv2d(temperature_4d, kernel_4d, border_mode="valid").flatten(),
-#     )
-#     return result
-
-
-def make_coeffs(data: np.ndarray, width: pm.Discrete, lag: pm.Discrete) -> pt.tensor.TensorLike:
-    coeffs = pm.math.zeros(
-        shape=data.size,
-        dtype=float,
-    )
-    return pt.tensor.set_subtensor(
-        coeffs[lag : lag + width + 1], pm.math.full(shape=(lag + width,), fill_value=1 / width)
-    )
-
-
-def run_ar():
-    data = get_data(impute_time=True)
-
-    with pm.Model() as model:
-        n_values = len(data)
-        days_since_start_data = pm.Data("days_since_start_data", data["days_since_start"])
-        t_data = pm.Data("t_data", data["t"])
-        c_data = pm.Data("c_data", data["c"])
-
-        c0 = pm.DiscreteUniform("c0", lower=0, upper=1000)
-        alpha = pm.HalfNormal("alpha", sigma=10)
-        # beta = pm.HalfNormal("beta", sigma=10)
-        # gamma = pm.HalfNormal("gamma", sigma=10)
-        width_0 = pm.DiscreteUniform("width_0", 1, 100)
-        # width_1 = pm.DiscreteUniform("width_1", 1, 100)
-        lag_0 = pm.DiscreteUniform("lag_0", lower=180, upper=545)
-        # lag_1 = pm.DiscreteUniform("lag_1", lower=550, upper=910)
-        # lag_2 = pm.DiscreteUniform("lag_2", lower=915, upper=1275)
-
-        rho = make_coeffs(t_data, width_0, lag_0)
-        # sigma = make_coeffs(t_data, width_1, lag_1)
-        # eta = make_coeffs(c_data, 1, lag_2)
-
-        ar_t_1 = pm.AR(
-            "ar_t_1",
-            rho=rho,
-            sigma=0,
-            ar_order=n_values,
-            init_dist=pm.Normal.dist(60, 20),
-            shape=(n_values,),
-        )
-        # ar_t_2 = pm.AR("ar_t_2", rho=sigma, sigma=0, ar_order=n_values, init_dist=pm.Normal.dist(60, 20), shape=(n_values,))
-        # ar_c = pm.AR("ar_c", rho=eta, sigma=0, ar_order=n_values, init_dist=pm.Normal.dist(10, 1), shape=(n_values,))
-
-        c_mu = pm.Deterministic(
-            "c_mu",
-            c0 + alpha * ar_t_1,  # + beta*ar_t_2 + gamma*ar_c
-        )
-        c_model = pm.Poisson("c_model", mu=c_mu, observed=c_data)
-
-        render_to_terminal(model)
-        idata = pm.sample()
-        # prior_samples = pm.sample_prior_predictive(1000)
-
-    console.print(df_to_rich(az.summary(idata)))
-    # render_to_terminal(model)
-
-    az.plot_trace(idata)
-    fig, ax = plt.subplots(1, 1, figsize=(8, 10))
-    az.plot_dist(
-        data["c"],
-        kind="hist",
-        color="C1",
-        hist_kwargs={"alpha": 0.6},
-        label="observed",
-        ax=ax,
-    )
-    # az.plot_dist(
-    #     prior_samples.prior_predictive["cones"],
-    #     kind="hist",
-    #     hist_kwargs={"alpha": 0.6},
-    #     label="simulated",
-    #     ax=ax,
-    # )
-
-    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-    az.plot_ts(
-        idata=idata,
-        y="c_model",
-        x="days_since_start_data",
-        axes=ax,
-    )
-
-    plt.show()
-
-
-def lag(data: pd.Series, lag: pm.Discrete):
-    lagged_data = pm.math.full((data.shape[0],), np.nan, dtype=float)
-    lagged_data = pt.tensor.set_subtensor(lagged_data[:-lag], data[lag:])
-    return lagged_data
-
-
-def mavg2(data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
+def mavg_forward(data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
     result, _updates = pt.scan(
-        fn=fmavg,
+        fn=_forward,
         outputs_info=None,
         sequences=[pt.tensor.arange(data.shape[0])],
         non_sequences=[data, width, lag],
@@ -391,88 +296,13 @@ def mavg2(data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
     return result
 
 
-def fmavg(i: int, data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
+def _forward(i: int, data: pd.Series, width: pm.Discrete, lag: pm.Discrete):
     start = i - lag
     return pm.math.switch(
         pm.math.and_(pm.math.ge(start, 0), pm.math.lt(start + width, data.shape[0])),
         data[start : start + width].mean(),
         np.nan,
     )
-
-
-def runmodel():
-    data = get_data(impute_time=True)
-
-    # fig, ax = plt.subplots()
-    # ax.plot(data['days_since_start'], data['t'], '-ow', alpha=0.4)
-    # ax.plot(data['days_since_start'], data['c'], '-or')
-    # plt.show()
-
-    with pm.Model() as model:
-        n_values = len(data)
-
-        c_vals = data["c"].values
-        f_vals = data["t"].values
-        day_vals = data["days_since_start"].values
-
-        days_since_start_data = pm.Data("days_since_start_data", day_vals)
-        f_data = pm.Data("f_data", f_vals)
-        c_data = pm.Data("c_data", c_vals)
-
-        c0 = pm.DiscreteUniform("c0", lower=0, upper=1000)
-        alpha = pm.HalfNormal("alpha", sigma=10)
-        beta = pm.HalfNormal("beta", sigma=10)
-        gamma = pm.HalfNormal("gamma", sigma=10)
-        width_0 = pm.DiscreteUniform("width_0", 1, 100)
-        width_1 = pm.DiscreteUniform("width_1", 1, 100)
-        lag_0 = pm.DiscreteUniform("lag_0", lower=180, upper=545)
-        lag_1 = pm.DiscreteUniform("lag_1", lower=550, upper=910)
-        lag_2 = pm.DiscreteUniform("lag_2", lower=915, upper=1275)
-
-        c_mu = pm.Deterministic(
-            "c_mu",
-            c0
-            + alpha * mavg2(f_data, width_0, lag_0)
-            + beta * mavg2(f_data, width_1, lag_1)
-            + gamma * lag(c_data, lag_2),
-        )
-
-        c_model = pm.Poisson("c_model", mu=c_mu, observed=c_data)
-
-        render_to_terminal(model)
-        idata = pm.sample()
-        # prior_samples = pm.sample_prior_predictive(1000)
-
-    console.print(df_to_rich(az.summary(idata)))
-    # render_to_terminal(model)
-
-    az.plot_trace(idata)
-    fig, ax = plt.subplots(1, 1, figsize=(8, 10))
-    az.plot_dist(
-        data["c"],
-        kind="hist",
-        color="C1",
-        hist_kwargs={"alpha": 0.6},
-        label="observed",
-        ax=ax,
-    )
-    # az.plot_dist(
-    #     prior_samples.prior_predictive["cones"],
-    #     kind="hist",
-    #     hist_kwargs={"alpha": 0.6},
-    #     label="simulated",
-    #     ax=ax,
-    # )
-
-    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-    az.plot_ts(
-        idata=idata,
-        y="c_model",
-        x="days_since_start_data",
-        axes=ax,
-    )
-
-    plt.show()
 
 
 if __name__ == "__main__":
