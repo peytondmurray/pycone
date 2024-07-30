@@ -1,11 +1,13 @@
 project(
   'fast_dt',
+  'c',
   'cpp',
+  'cython',
   version: run_command(['python', '-m', 'setuptools_scm'], check: true).stdout().strip(),
 )
 
-py_mod = import('python')
-py = py_mod.find_installation()
+py = import('python').find_installation()
+cy = meson.get_compiler('cython')
 
 pybind11_dep = dependency('pybind11', version: '>=2.10.4')
 
@@ -34,16 +36,6 @@ py.install_sources(
   pure: false,
 )
 
-py.install_sources(
-  [
-    'pycone/stats/__init__.py',
-    'pycone/stats/stats_pymc.py',
-    'pycone/stats/stats_emcee.py'
-  ],
-  subdir: 'pycone/stats',
-  pure: false,
-)
-
 install_data(
   'pycone/data/cone_crop.xlsx',
   'pycone/data/daily_weather_1981-2014.xlsx',
@@ -62,3 +54,5 @@ py.extension_module(
   include_directories: includes,
   dependencies: [pybind11_dep]
 )
+
+subdir('pycone/stats')

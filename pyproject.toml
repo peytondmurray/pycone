@@ -4,6 +4,7 @@ requires = [
     "setuptools_scm",
     "numpy",
     "pybind11",
+    "cython>=3.0.10"
 ]
 build-backend = "mesonpy"
 
