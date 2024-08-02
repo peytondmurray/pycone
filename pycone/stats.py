@@ -205,6 +205,22 @@ def forward_moving_average(i: int, t: SharedVariable, width: pm.Discrete):
     return pm.math.switch(i + width < t.shape[0], t[i : i + width].mean(), np.nan)
 
 
+def standardize_normal(series: pd.Series) -> pd.Series:
+    """Standardize a normally distributed dataset.
+
+    Parameters
+    ----------
+    series : pd.Series
+        Dataset to standardize
+
+    Returns
+    -------
+    pd.Series
+        Standardized dataset
+    """
+    return (series - series.mean()) / series.std()
+
+
 def runmodel():
     # Likelihood is going to be poisson-distributed for each site; there's a waiting time
     # distribution for each cone appearing in the stand. There are few enough cones produced for
@@ -214,7 +230,7 @@ def runmodel():
 
     with pm.Model() as model:
         d_data = pm.MutableData("days_since_start_data", data["days_since_start"])
-        t_data = pm.MutableData("t_data", data["t"])
+        t_data = pm.MutableData("t_data", standardize_normal(data["t"]))
         c_data = pm.MutableData("c_data", data["c"])
 
         # Priors
@@ -239,6 +255,22 @@ def runmodel():
             - pm.Deterministic("last_cone", lagged(c_data, lag_last_cone)),
         )
 
+        pm.Deterministic(
+            "mask_prior",
+            pm.math.switch(
+                pm.math.or_(pt.tensor.math.isnan(c_mu), pt.tensor.math.isnan(c_data)),
+                0,
+                1,
+            ),
+        )
+
+        # # simple poisson
+        # pm.Poisson(
+        #     "c_model",
+        #     mu=c_mu,
+        #     observed=c_data,
+        # )
+
         pm.Poisson(
             "c_model",
             mu=pm.math.switch(
@@ -250,6 +282,8 @@ def runmodel():
         )
 
         render_to_terminal(model)
+        model.debug()
+        return
         idata = pm.sample(discard_tuned_samples=False)
         # prior_samples = pm.sample_prior_predictive(1000)
 
