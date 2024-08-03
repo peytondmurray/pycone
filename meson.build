@@ -38,7 +38,10 @@ py.install_sources(
   [
     'pycone/stats/__init__.py',
     'pycone/stats/stats_pymc.py',
-    'pycone/stats/stats_emcee.py'
+    'pycone/stats/stats_emcee.py',
+    'pycone/stats/math.py',
+    'pycone/stats/model.py',
+    'pycone/stats/transform.py',
   ],
   subdir: 'pycone/stats',
   pure: false,

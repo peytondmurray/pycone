@@ -10,14 +10,14 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import scipy.special as ss
-import scipy.stats as st
 import tarmac
 import tqdm
 from rich.console import Console
 
 from ..preprocess import load_data
 from ..util import add_days_since_start, read_data
+from .model import Model, ThreeYearsPreceedingModel
+from .transform import StandardizeNormal, Transform
 
 az.style.use("default")
 console = Console()
@@ -25,115 +25,6 @@ console = Console()
 
 if not sys.warnoptions:
     warnings.simplefilter("ignore", RuntimeWarning)
-
-
-class Model:
-    """Container for probability functions for a given model."""
-
-    name: str = ""
-    labels: list[str] = []
-
-    def __init__(self):
-        """Create a Model."""
-        self.ndim = len(self.labels)
-        self.data = None
-
-    def initialize(self, nwalkers: int = 32) -> np.ndarray:
-        """Generate initial positions for the MCMC walkers.
-
-        Parameters
-        ----------
-        nwalkers : int
-            Number of walkers to generate positions for
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape (nwalkers, self.ndim)
-        """
-        raise NotImplementedError
-
-    def log_prior(self, theta: tuple[float, ...]) -> float:
-        """Calculate the log prior of the model.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Tuple of model parameters
-
-        Returns
-        -------
-        float
-            Log probability for the given model parameters
-        """
-        raise NotImplementedError
-
-    def log_likelihood_vector(
-        self,
-        theta: tuple[float, ...],
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
-        """Calculate the log likelihood for each data point (f, c) given the model parameters.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Tuple of model parameters
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone count
-
-        Returns
-        -------
-        np.ndarray
-            Individual probabilities of observing the data points given the model
-            parameters; the shape is the same as the shape of the input data `f` and `c`.
-        """
-        raise NotImplementedError
-
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...],
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
-        """Generate a sample from the posterior predictive distribution.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Tuple of model parameters
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone count
-
-        Returns
-        -------
-        np.ndarray
-            Array of data generated from the posterior predictive distribution; has the
-            same shape as the input data `f` and `c`
-
-        """
-        raise NotImplementedError
-
-
-def standardize_normal(series: pd.Series) -> pd.Series:
-    """Standardize a normally distributed dataset.
-
-    Parameters
-    ----------
-    series : pd.Series
-        Dataset to standardize
-
-    Returns
-    -------
-    pd.Series
-        Standardized dataset
-    """
-    return (series - series.mean()) / series.std()
 
 
 def get_data(
@@ -210,68 +101,6 @@ def get_data(
     return obs
 
 
-def mavg(f: np.ndarray, width: float | int, lag: float | int) -> np.ndarray:
-    """Calculate a lagged moving average of the dataset.
-
-    Parameters
-    ----------
-    f : np.ndarray
-        Data to calculate a lagged moving average of
-    width : float | int
-        The moving average is calculated by convolution with a flat kernel
-        of size 2*width + 1 (so the moving average is always centered on the
-        original data point). Floats are cast to int first
-    lag : float | int
-        Number of days to shift the moving average
-
-    Returns
-    -------
-    np.ndarray
-        Lagged moving average of `f`. The shape is the same as `f`, but values
-        at the edge of the dataset are set to `np.nan`
-    """
-    width = int(width)
-    lag = int(lag)
-
-    window = 2 * width + 1
-    average = np.convolve(f, np.ones(shape=(window,), dtype=float), mode="same") / window
-
-    # Mask off the convolution at the edge
-    average[:width] = np.nan
-    average[-width:] = np.nan
-
-    result = np.full_like(f, np.nan, dtype=float)
-    result[:-lag] = average[lag:]
-    return result
-
-
-def lagged(c: np.ndarray, lag: int | float) -> np.ndarray:
-    """Shift the array `c` by `lag` number of days backward.
-
-    That is,
-
-        c[i] = lagged(c, lag)[i - lag]
-
-    Parameters
-    ----------
-    c : np.ndarray
-        Time series data to shift
-    lag : int | float
-        Magnitude of the shift, in days. Floats are cast to int first
-
-    Returns
-    -------
-    np.ndarray
-        An array which is the same shape as `c` but shifted by `lag` days.
-        Values at the edge of the dataset are set to `np.nan`
-    """
-    lag = int(lag)
-
-    result = np.full_like(c, np.nan, dtype=float)
-    result[:-lag] = c[lag:]
-    return result
-
-
 def log_probability(
     theta: tuple, f: np.ndarray, c: np.ndarray, model: Model
 ) -> tuple[float, np.ndarray]:
@@ -309,10 +138,8 @@ def log_probability(
 
 def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
     """Run the sampler."""
-    data = get_data(impute_time=True)
-
-    f = standardize_normal(data["t"]).to_numpy()
-    c = data["c"].to_numpy()
+    f = model.transformed_data["t"].to_numpy()
+    c = model.transformed_data["c"].to_numpy()
 
     sampler_path = f"{model.name}_sampler.h5"
 
@@ -386,7 +213,6 @@ def load_az_idata(model: Model, chains: np.ndarray | str | None = None) -> az.In
 
 
 def sample_posterior_predictive(
-    data: pd.DataFrame,
     model: Model,
     chains: np.ndarray | str | None = None,
     n_predictions: int | None = None,
@@ -399,8 +225,6 @@ def sample_posterior_predictive(
 
     Parameters
     ----------
-    data : pd.DataFrame
-        Observed data; `t` is the temperature, `c` is the cone count. Must be for a single site
     model : Model
         Model for which posterior predictive samples are to be generated
     chains : np.ndarray | str | None
@@ -417,14 +241,23 @@ def sample_posterior_predictive(
         Posterior predictive samples for the number of cones
     """
     if chains is None:
-        samples = emcee.backends.HDFBackend(f"{model.name}_sampler.h5").get_chain()
+        sampler_path = f"{model.name}_sampler.h5"
+        # Get the number of existing runs in the file
+        with h5py.File(sampler_path, "r") as file:
+            runs = list(file.keys())
+
+        sampler = emcee.backends.HDFBackend(
+            f"{model.name}_sampler.h5",
+            name=f"mcmc_{len(runs)}",
+        )
+
+        breakpoint()
+
+        samples = sampler.get_chain()
     elif isinstance(chains, str):
-        samples = emcee.backends.HDFBackend(chains).get_chain()
+        samples = emcee.backends.HDFBackend(chains, name="mcmc_0").get_chain()
     else:
         samples = chains
-
-    f = data["t"].to_numpy()
-    c = data["c"].to_numpy()
 
     samples = samples[burn_in:, :, :]
     _, _, ndim = samples.shape
@@ -438,871 +271,17 @@ def sample_posterior_predictive(
             "Number of predictions is greater than the number of samples from the posterior distribution."
         )
 
-    n_steps = data.shape[0]
+    n_steps = len(model.raw_data)
     posterior_predictive = np.zeros((n_predictions, n_steps), dtype=int)
     for i in tqdm.trange(n_predictions, desc="Sampling the posterior predictive distribution..."):
-        posterior_predictive[i, :] = model.posterior_predictive(samples[i, :], f, c)
+        posterior_predictive[i, :] = model.posterior_predictive(samples[i, :])
+
+    # `model.posterior_predictive` returns _transformed_ predictions. Invert the transformed
+    # predictions here rather than inside `model.posterior_predictive` for efficiency.
+    posterior_predictive = model.transforms["c"].inverse(posterior_predictive)
 
     np.save(f"posterior_predictive_{model.name}.npy", posterior_predictive)
     return posterior_predictive
-
-
-class ThreeYearsPreceedingModel(Model):
-    """Model with terms from temperature contributions for three years before the cone crop."""
-
-    name = "three_years_preceeding"
-    labels = [
-        "c0",
-        "alpha",
-        "beta",
-        "gamma",
-        "width_alpha",
-        "width_beta",
-        "width_gamma",
-        "lag_alpha",
-        "lag_beta",
-        "lag_gamma",
-        "lag_last_cone",
-    ]
-
-    def initialize(self, nwalkers: int = 32) -> np.ndarray:
-        """Generate initial positions for the MCMC walkers.
-
-        Parameters
-        ----------
-        nwalkers : int
-            Number of walkers to generate positions for
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape (nwalkers, self.ndim)
-        """
-        return np.vstack(
-            (
-                st.norm.rvs(loc=30, scale=10, size=nwalkers),  # c0
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # alpha
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # beta
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # gamma
-                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_alpha
-                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_beta
-                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_gamma
-                st.norm.rvs(loc=365, scale=15, size=nwalkers),  # lag_alpha
-                st.norm.rvs(loc=730, scale=15, size=nwalkers),  # lag_beta
-                st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_gamma
-                st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_last_cone
-            )
-        ).T
-
-    def log_prior(self, theta: tuple[float, ...]) -> float:
-        """Compute the log prior probability.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-
-        Returns
-        -------
-        float
-            Log prior probability
-        """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        priors = [
-            st.uniform.pdf(c0, loc=0, scale=1000),
-            st.halfnorm.pdf(alpha, scale=10),
-            st.halfnorm.pdf(beta, scale=10),
-            st.halfnorm.pdf(gamma, scale=10),
-            st.uniform.pdf(width_alpha, loc=1, scale=100),
-            st.uniform.pdf(width_beta, loc=1, scale=100),
-            st.uniform.pdf(width_gamma, loc=1, scale=100),
-            st.uniform.pdf(lag_alpha, loc=185, scale=365),
-            st.uniform.pdf(lag_beta, loc=550, scale=365),
-            st.uniform.pdf(lag_gamma, loc=915, scale=365),
-            st.uniform.pdf(lag_last_cone, loc=915, scale=1095),
-        ]
-
-        prior = np.prod(priors)
-        if prior <= 0 or np.isnan(prior):
-            return -np.inf
-        return np.log(prior)
-
-    def log_likelihood_vector(
-        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
-        """Compute the log likelihood vector.
-
-        The nansum of this vector returns the log likelihood. Data must be contiguous.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-        f : np.ndarray
-            Temperature data
-        c : np.ndarray
-            Cone data
-
-        Returns
-        -------
-        np.ndarray
-            Array containing log-likelihood for every data point for the given theta
-        """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        # Each date has a different c_mu, so this vector is of shape == c.shape
-        c_mu: np.ndarray = (
-            c0
-            + alpha * self.mavg(f, width_alpha, lag_alpha)
-            + beta * self.mavg(f, width_beta, lag_beta)
-            + gamma * self.mavg(f, width_gamma, lag_gamma)
-            - self.lagged(c, lag_last_cone)
-        )
-
-        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
-
-    def mavg(self, f: np.ndarray, width: float | int, lag: float | int) -> np.ndarray:
-        """Calculate a lagged moving average of the dataset.
-
-        Parameters
-        ----------
-        f : np.ndarray
-            Data to calculate a lagged moving average of
-        width : float | int
-            The moving average is calculated by convolution with a flat kernel
-            of size 2*width + 1 (so the moving average is always centered on the
-            original data point). Floats are cast to int first
-        lag : float | int
-            Number of days to shift the moving average
-
-        Returns
-        -------
-        np.ndarray
-            Lagged moving average of `f`. The shape is the same as `f`, but values
-            at the edge of the dataset are set to `np.nan`
-        """
-        width = int(width)
-        lag = int(lag)
-
-        window = 2 * width + 1
-        average = np.convolve(f, np.ones(shape=(window,), dtype=float), mode="same") / window
-
-        # Mask off the convolution at the edge
-        average[:width] = np.nan
-        average[-width:] = np.nan
-
-        result = np.full_like(f, np.nan, dtype=float)
-        result[:-lag] = average[lag:]
-        return result
-
-    def lagged(self, c: np.ndarray, lag: int | float) -> np.ndarray:
-        """Shift the array `c` by `lag` number of days backward.
-
-        That is,
-
-            c[i] = lagged(c, lag)[i - lag]
-
-        Parameters
-        ----------
-        c : np.ndarray
-            Time series data to shift
-        lag : int | float
-            Magnitude of the shift, in days. Floats are cast to int first
-
-        Returns
-        -------
-        np.ndarray
-            An array which is the same shape as `c` but shifted by `lag` days.
-            Values at the edge of the dataset are set to `np.nan`
-        """
-        lag = int(lag)
-
-        result = np.full_like(c, np.nan, dtype=float)
-        result[:-lag] = c[lag:]
-        return result
-
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...] | np.ndarray,
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Model parameter vector
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone number
-
-        Returns
-        -------
-        np.ndarray
-            Time series (same shape as `f` and `c`) of independent cone predictions
-        """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        c_mu: np.ndarray = (
-            c0
-            + alpha * self.mavg(f, width_alpha, lag_alpha)
-            + beta * self.mavg(f, width_beta, lag_beta)
-            + gamma * self.mavg(f, width_gamma, lag_gamma)
-            - self.lagged(c, lag_last_cone)
-        )
-        return st.poisson.rvs(c_mu)
-
-
-class ScaledThreeYearsPreceedingModel(Model):
-    """A model with terms for 1, 2, and 3 years preceeding a cone crop."""
-
-    name = "scaled_three_year"
-    labels = [
-        "c0",
-        "alpha",
-        "beta",
-        "gamma",
-        "width_alpha",
-        "width_beta",
-        "width_gamma",
-        "lag_alpha",
-        "lag_beta",
-        "lag_gamma",
-        "lag_last_cone",
-    ]
-
-    def initialize(self, nwalkers: int = 32) -> np.ndarray:
-        """Generate initial positions for the MCMC walkers.
-
-        Parameters
-        ----------
-        nwalkers : int
-            Number of walkers to generate positions for
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape (nwalkers, self.ndim)
-        """
-        return np.vstack(
-            (
-                st.norm.rvs(loc=20, scale=5, size=nwalkers),  # c0
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # alpha
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # beta
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # gamma
-                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_alpha
-                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_beta
-                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_gamma
-                st.norm.rvs(loc=365, scale=5, size=nwalkers),  # lag_alpha
-                st.norm.rvs(loc=730, scale=5, size=nwalkers),  # lag_beta
-                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_gamma
-                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_last_cone
-            )
-        ).T
-
-    def log_prior(self, theta: tuple[float, ...]) -> float:
-        """Compute the log prior probability.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-
-        Returns
-        -------
-        float
-            Log prior probability
-        """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        priors = [
-            st.uniform.pdf(c0, loc=0, scale=1000),
-            st.halfnorm.pdf(alpha, scale=10),
-            st.halfnorm.pdf(beta, scale=10),
-            st.halfnorm.pdf(gamma, scale=10),
-            st.uniform.pdf(width_alpha, loc=0.01, scale=0.3),
-            st.uniform.pdf(width_beta, loc=0.01, scale=0.3),
-            st.uniform.pdf(width_gamma, loc=0.01, scale=0.3),
-            st.uniform.pdf(lag_alpha, loc=0.5, scale=1),
-            st.uniform.pdf(lag_beta, loc=1.5, scale=1),
-            st.uniform.pdf(lag_gamma, loc=2.5, scale=1),
-            st.uniform.pdf(lag_last_cone, loc=1, scale=5),
-        ]
-
-        prior = np.prod(priors)
-        if prior <= 0 or np.isnan(prior):
-            return -np.inf
-        return np.log(prior)
-
-    def log_likelihood_vector(
-        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
-        """Compute the log likelihood vector.
-
-        The nansum of this vector returns the log likelihood. Data must be contiguous.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-        f : np.ndarray
-            Temperature data
-        c : np.ndarray
-            Cone data
-
-        Returns
-        -------
-        np.ndarray
-            Array containing log-likelihood for every data point for the given theta
-        """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        # Each date has a different c_mu, so this vector is of shape == c.shape
-        c_mu: np.ndarray = (
-            c0
-            + alpha * self.mavg(f, width_alpha, lag_alpha)
-            + beta * self.mavg(f, width_beta, lag_beta)
-            + gamma * self.mavg(f, width_gamma, lag_gamma)
-            - self.lagged(c, lag_last_cone)
-        )
-
-        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
-
-    def mavg(self, f: np.ndarray, width: float | int, lag: float | int) -> np.ndarray:
-        """Calculate a lagged moving average of the dataset.
-
-        Parameters
-        ----------
-        f : np.ndarray
-            Data to calculate a lagged moving average of
-        width : float | int
-            The moving average is calculated by convolution with a flat kernel
-            of size 2*width + 1 (so the moving average is always centered on the
-            original data point). Floats are cast to int first
-        lag : float | int
-            Number of days to shift the moving average
-
-        Returns
-        -------
-        np.ndarray
-            Lagged moving average of `f`. The shape is the same as `f`, but values
-            at the edge of the dataset are set to `np.nan`
-        """
-        width = int(width * 100)
-        lag = int(lag * 365)
-
-        window = 2 * width + 1
-        average = np.convolve(f, np.ones(shape=(window,), dtype=float), mode="same") / window
-
-        # Mask off the convolution at the edge
-        average[:width] = np.nan
-        average[-width:] = np.nan
-
-        result = np.full_like(f, np.nan, dtype=float)
-        result[:-lag] = average[lag:]
-        return result
-
-    def lagged(self, c: np.ndarray, lag: int | float) -> np.ndarray:
-        """Shift the array `c` by `lag` number of days backward.
-
-        That is,
-
-            c[i] = lagged(c, lag)[i - lag]
-
-        Parameters
-        ----------
-        c : np.ndarray
-            Time series data to shift
-        lag : int | float
-            Magnitude of the shift, in days. Floats are cast to int first
-
-        Returns
-        -------
-        np.ndarray
-            An array which is the same shape as `c` but shifted by `lag` days.
-            Values at the edge of the dataset are set to `np.nan`
-        """
-        lag = int(lag * 365)
-
-        result = np.full_like(c, np.nan, dtype=float)
-        result[:-lag] = c[lag:]
-        return result
-
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...] | np.ndarray,
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Model parameter vector
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone number
-
-        Returns
-        -------
-        np.ndarray
-            Time series (same shape as `f` and `c`) of independent cone predictions
-        """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        c_mu: np.ndarray = (
-            c0
-            + alpha * self.mavg(f, width_alpha, lag_alpha)
-            + beta * self.mavg(f, width_beta, lag_beta)
-            + gamma * self.mavg(f, width_gamma, lag_gamma)
-            - self.lagged(c, lag_last_cone)
-        )
-        return st.poisson.rvs(c_mu)
-
-
-class ScaledTwoYearsPreceedingModel(Model):
-    """A model with terms for 1 and 2 years preceeding a cone crop."""
-
-    name = "scaled_two_year"
-    labels = [
-        "c0",
-        "alpha",
-        "beta",
-        "width_alpha",
-        "width_beta",
-        "lag_alpha",
-        "lag_beta",
-        "lag_last_cone",
-    ]
-
-    def initialize(self, nwalkers: int = 32) -> np.ndarray:
-        """Generate initial positions for the MCMC walkers.
-
-        Parameters
-        ----------
-        nwalkers : int
-            Number of walkers to generate positions for
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape (nwalkers, self.ndim)
-        """
-        initial = np.array(
-            [
-                10,  # c0
-                5,  # alpha
-                5,  # beta
-                0.1,  # width_alpha
-                0.1,  # width_beta
-                1,  # lag_alpha
-                2,  # lag_beta
-                3,  # lag_last_cone
-            ]
-        )
-
-        return (
-            np.vstack(
-                (
-                    st.uniform.rvs(loc=-5, scale=5, size=nwalkers),
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                    st.uniform.rvs(loc=-0.1, scale=0.3, size=nwalkers),
-                    st.uniform.rvs(loc=-0.1, scale=0.3, size=nwalkers),
-                    st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
-                    st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
-                    st.uniform.rvs(loc=-0.5, scale=1, size=nwalkers),
-                )
-            ).T
-            + initial
-        )
-
-    def log_prior(self, theta: tuple[float, ...]) -> float:
-        """Compute the log prior probability.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-
-        Returns
-        -------
-        float
-            Log prior probability
-        """
-        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
-
-        priors = [
-            st.uniform.pdf(c0, loc=0, scale=1000),
-            st.halfnorm.pdf(alpha, scale=10),
-            st.halfnorm.pdf(beta, scale=10),
-            st.uniform.pdf(width_alpha, loc=0, scale=1),
-            st.uniform.pdf(width_beta, loc=0, scale=1),
-            st.uniform.pdf(lag_alpha, loc=0.5, scale=1),
-            st.uniform.pdf(lag_beta, loc=1.5, scale=1),
-            st.uniform.pdf(lag_last_cone, loc=2.5, scale=1),
-        ]
-
-        prior = np.prod(priors)
-        if prior <= 0 or np.isnan(prior):
-            return -np.inf
-        return np.log(prior)
-
-    def log_likelihood_vector(
-        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
-        """Compute the log likelihood vector.
-
-        The nansum of this vector returns the log likelihood. Data must be contiguous.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-        f : np.ndarray
-            Temperature data
-        c : np.ndarray
-            Cone data
-
-        Returns
-        -------
-        np.ndarray
-            Array containing log-likelihood for every data point for the given theta
-        """
-        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
-
-        # Each date has a different c_mu, so this vector is of shape == c.shape
-        c_mu: np.ndarray = (
-            c0
-            + alpha * self.mavg(f, width_alpha, lag_alpha)
-            + beta * self.mavg(f, width_beta, lag_beta)
-            - self.lagged(c, lag_last_cone)
-        )
-
-        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
-
-    def mavg(self, f: np.ndarray, width: float | int, lag: float | int) -> np.ndarray:
-        """Calculate a lagged moving average of the dataset.
-
-        Parameters
-        ----------
-        f : np.ndarray
-            Data to calculate a lagged moving average of
-        width : float | int
-            The moving average is calculated by convolution with a flat kernel
-            of size 2*width + 1 (so the moving average is always centered on the
-            original data point). Floats are cast to int first
-        lag : float | int
-            Number of days to shift the moving average
-
-        Returns
-        -------
-        np.ndarray
-            Lagged moving average of `f`. The shape is the same as `f`, but values
-            at the edge of the dataset are set to `np.nan`
-        """
-        width = int(width * 100)
-        lag = int(lag * 365)
-
-        window = 2 * width + 1
-        average = np.convolve(f, np.ones(shape=(window,), dtype=float), mode="same") / window
-
-        # Mask off the convolution at the edge
-        average[:width] = np.nan
-        average[-width:] = np.nan
-
-        result = np.full_like(f, np.nan, dtype=float)
-        result[:-lag] = average[lag:]
-        return result
-
-    def lagged(self, c: np.ndarray, lag: int | float) -> np.ndarray:
-        """Shift the array `c` by `lag` number of days backward.
-
-        That is,
-
-            c[i] = lagged(c, lag)[i - lag]
-
-        Parameters
-        ----------
-        c : np.ndarray
-            Time series data to shift
-        lag : int | float
-            Magnitude of the shift, in days. Floats are cast to int first
-
-        Returns
-        -------
-        np.ndarray
-            An array which is the same shape as `c` but shifted by `lag` days.
-            Values at the edge of the dataset are set to `np.nan`
-        """
-        lag = int(lag * 365)
-
-        result = np.full_like(c, np.nan, dtype=float)
-        result[:-lag] = c[lag:]
-        return result
-
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...],
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Model parameter vector
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone number
-
-        Returns
-        -------
-        np.ndarray
-            Time series (same shape as `f` and `c`) of independent cone predictions
-        """
-        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
-
-        c_mu: np.ndarray = (
-            c0
-            + alpha * self.mavg(f, width_alpha, lag_alpha)
-            + beta * self.mavg(f, width_beta, lag_beta)
-            - self.lagged(c, lag_last_cone)
-        )
-        return st.poisson.rvs(c_mu)
-
-
-class TwoYearsPreceedingModel(Model):
-    """A model with terms for 1 and 2 years preceeding a cone crop."""
-
-    name = "no_gamma"
-    labels = [
-        "c0",
-        "alpha",
-        "beta",
-        "width_alpha",
-        "width_beta",
-        "lag_alpha",
-        "lag_beta",
-        "lag_last_cone",
-    ]
-
-    def initialize(self, nwalkers: int = 32) -> np.ndarray:
-        """Generate initial positions for the MCMC walkers.
-
-        Parameters
-        ----------
-        nwalkers : int
-            Number of walkers to generate positions for
-
-        Returns
-        -------
-        np.ndarray
-            Array of shape (nwalkers, self.ndim)
-        """
-        initial = np.array(
-            [
-                10,  # c0
-                5,  # alpha
-                5,  # beta
-                10,  # width_alpha
-                10,  # width_beta
-                200,  # lag_alpha
-                600,  # lag_beta
-                1000,  # lag_last_cone
-            ]
-        )
-
-        return (
-            np.vstack(
-                (
-                    st.randint.rvs(low=-5, high=5, size=nwalkers),
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                    st.norm.rvs(loc=10, scale=1, size=nwalkers),
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),
-                    st.randint.rvs(low=-10, high=10, size=nwalkers),
-                )
-            ).T
-            + initial
-        )
-
-    def log_prior(self, theta: tuple[float, ...]) -> float:
-        """Compute the log prior probability.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-
-        Returns
-        -------
-        float
-            Log prior probability
-        """
-        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
-
-        priors = [
-            st.randint.pmf(np.floor(c0), low=0, high=1000),
-            st.halfnorm.pdf(alpha, scale=10),
-            st.halfnorm.pdf(beta, scale=10),
-            st.randint.pmf(np.floor(width_alpha), low=1, high=100),
-            st.randint.pmf(np.floor(width_beta), low=1, high=100),
-            st.randint.pmf(np.floor(lag_alpha), low=180, high=545),
-            st.randint.pmf(np.floor(lag_beta), low=550, high=910),
-            st.randint.pmf(np.floor(lag_last_cone), low=915, high=1275),
-        ]
-
-        prior = np.prod(priors)
-        if prior <= 0 or np.isnan(prior):
-            return -np.inf
-        return np.log(prior)
-
-    def log_likelihood_vector(
-        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
-        """Compute the log likelihood vector.
-
-        The nansum of this vector returns the log likelihood. Data must be contiguous.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Parameters of the model
-        f : np.ndarray
-            Temperature data
-        c : np.ndarray
-            Cone data
-
-        Returns
-        -------
-        np.ndarray
-            Array containing log-likelihood for every data point for the given theta
-        """
-        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
-
-        # Each date has a different c_mu, so this vector is of shape == c.shape
-        c_mu: np.ndarray = (
-            c0
-            + alpha * mavg(f, width_alpha, lag_alpha)
-            + beta * mavg(f, width_beta, lag_beta)
-            - lagged(c, lag_last_cone)
-        )
-
-        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
-
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...],
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Model parameter vector
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone number
-
-        Returns
-        -------
-        np.ndarray
-            Time series (same shape as `f` and `c`) of independent cone predictions
-        """
-        c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
-
-        c_mu: np.ndarray = (
-            c0
-            + alpha * mavg(f, width_alpha, lag_alpha)
-            + beta * mavg(f, width_beta, lag_beta)
-            - lagged(c, lag_last_cone)
-        )
-        return st.poisson.rvs(c_mu)
 
 
 def plot_chains(
@@ -1416,13 +395,13 @@ def plot_posterior_predictive(
 
     npredictions, nsteps = samples.shape
 
-    axes = fig.subplots(npredictions, 1)
+    axes = fig.subplots(npredictions, 1, sharex=True)
     if npredictions == 1:
         axes = [axes]
 
     for i in range(npredictions):
         axes[i].plot(samples[i, :], "-r", label="predicted")
-        axes[i].plot(model.data["c"], "-k", label="measured")
+        axes[i].plot(model.raw_data["c"], "-k", label="data")
 
     axes[0].legend()
     return fig
@@ -1452,10 +431,17 @@ def plot_figures(
     plot_chains(model, chains, burn_in=0)
     plot_corner(model, chains, burn_in=burn_in)
 
+    posterior_predictive_fname = f"posterior_predictive_{model.name}.npy"
+    if pathlib.Path(posterior_predictive_fname).exists():
+        posterior_predictive = np.load(posterior_predictive_fname)
+        plot_posterior_predictive(model, posterior_predictive)
+
 
 if __name__ == "__main__":
-    model = ThreeYearsPreceedingModel()
+    model = ThreeYearsPreceedingModel(
+        get_data(impute_time=True, site=1), transforms={"t": StandardizeNormal}
+    )
     # run_sampler(model, nwalkers=32, nsamples=10000)
-    sample_posterior_predictive()
-    plot_figures(model, burn_in=8000)
+    sample_posterior_predictive(model, n_predictions=10, burn_in=2000)
+    plot_figures(model, burn_in=2000)
     plt.show()
