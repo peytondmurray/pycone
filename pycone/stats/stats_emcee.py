@@ -120,6 +120,22 @@ class Model:
         raise NotImplementedError
 
 
+def standardize_normal(series: pd.Series) -> pd.Series:
+    """Standardize a normally distributed dataset.
+
+    Parameters
+    ----------
+    series : pd.Series
+        Dataset to standardize
+
+    Returns
+    -------
+    pd.Series
+        Standardized dataset
+    """
+    return (series - series.mean()) / series.std()
+
+
 def get_data(
     weather_path: str = "weather.csv",
     cones_path: str = "cones.csv",
@@ -295,9 +311,7 @@ def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
     """Run the sampler."""
     data = get_data(impute_time=True)
 
-    model.data = data
-
-    f = data["t"].to_numpy()
+    f = standardize_normal(data["t"]).to_numpy()
     c = data["c"].to_numpy()
 
     sampler_path = f"{model.name}_sampler.h5"
@@ -373,6 +387,7 @@ def load_az_idata(model: Model, chains: np.ndarray | str | None = None) -> az.In
 
 def sample_posterior_predictive(
     data: pd.DataFrame,
+    model: Model,
     chains: np.ndarray | str | None = None,
     n_predictions: int | None = None,
     burn_in: int = 16000,
@@ -386,11 +401,11 @@ def sample_posterior_predictive(
     ----------
     data : pd.DataFrame
         Observed data; `t` is the temperature, `c` is the cone count. Must be for a single site
+    model : Model
+        Model for which posterior predictive samples are to be generated
     chains : np.ndarray | str | None
         Posterior samples array of shape (nsamples, nwalkers, ndim); or a path to an emcee backend
         containing samples; if None, the default backend path is checked
-    model_name : str
-        Name of the model
     n_predictions : int | None
         Number of predictions to make
     burn_in : int | None
@@ -465,17 +480,17 @@ class ThreeYearsPreceedingModel(Model):
         """
         return np.vstack(
             (
-                st.norm.rvs(loc=20, scale=5, size=nwalkers),  # c0
+                st.norm.rvs(loc=30, scale=10, size=nwalkers),  # c0
                 st.norm.rvs(loc=10, scale=2, size=nwalkers),  # alpha
                 st.norm.rvs(loc=10, scale=2, size=nwalkers),  # beta
                 st.norm.rvs(loc=10, scale=2, size=nwalkers),  # gamma
-                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_alpha
-                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_beta
-                st.norm.rvs(loc=30, scale=5, size=nwalkers),  # width_gamma
-                st.norm.rvs(loc=365, scale=5, size=nwalkers),  # lag_alpha
-                st.norm.rvs(loc=730, scale=5, size=nwalkers),  # lag_beta
-                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_gamma
-                st.norm.rvs(loc=1095, scale=5, size=nwalkers),  # lag_last_cone
+                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_alpha
+                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_beta
+                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_gamma
+                st.norm.rvs(loc=365, scale=15, size=nwalkers),  # lag_alpha
+                st.norm.rvs(loc=730, scale=15, size=nwalkers),  # lag_beta
+                st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_gamma
+                st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_last_cone
             )
         ).T
 
@@ -517,7 +532,7 @@ class ThreeYearsPreceedingModel(Model):
             st.uniform.pdf(lag_alpha, loc=185, scale=365),
             st.uniform.pdf(lag_beta, loc=550, scale=365),
             st.uniform.pdf(lag_gamma, loc=915, scale=365),
-            st.uniform.pdf(lag_last_cone, loc=915, scale=365),
+            st.uniform.pdf(lag_last_cone, loc=915, scale=1095),
         ]
 
         prior = np.prod(priors)
@@ -630,6 +645,51 @@ class ThreeYearsPreceedingModel(Model):
         result = np.full_like(c, np.nan, dtype=float)
         result[:-lag] = c[lag:]
         return result
+
+    def posterior_predictive(
+        self,
+        theta: tuple[float, ...] | np.ndarray,
+        f: np.ndarray,
+        c: np.ndarray,
+    ) -> np.ndarray:
+        """Generate a set of independent posterior predictive samples.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Model parameter vector
+        f : np.ndarray
+            Temperature
+        c : np.ndarray
+            Cone number
+
+        Returns
+        -------
+        np.ndarray
+            Time series (same shape as `f` and `c`) of independent cone predictions
+        """
+        (
+            c0,
+            alpha,
+            beta,
+            gamma,
+            width_alpha,
+            width_beta,
+            width_gamma,
+            lag_alpha,
+            lag_beta,
+            lag_gamma,
+            lag_last_cone,
+        ) = theta
+
+        c_mu: np.ndarray = (
+            c0
+            + alpha * self.mavg(f, width_alpha, lag_alpha)
+            + beta * self.mavg(f, width_beta, lag_beta)
+            + gamma * self.mavg(f, width_gamma, lag_gamma)
+            - self.lagged(c, lag_last_cone)
+        )
+        return st.poisson.rvs(c_mu)
 
 
 class ScaledThreeYearsPreceedingModel(Model):
@@ -1317,7 +1377,7 @@ def plot_corner(
     if fig is None:
         fig = plt.figure()
 
-    tarmac.corner_plot(fig, samples[burn_in:, :, :], labels=model.labels)
+    tarmac.corner_plot(fig, samples[burn_in:, :, :], labels=model.labels, bins=40)
     return fig
 
 
@@ -1395,6 +1455,7 @@ def plot_figures(
 
 if __name__ == "__main__":
     model = ThreeYearsPreceedingModel()
-    # run_sampler(model, nwalkers=32, nsamples=20000)
-    plot_figures(model, burn_in=17500)
+    # run_sampler(model, nwalkers=32, nsamples=10000)
+    sample_posterior_predictive()
+    plot_figures(model, burn_in=8000)
     plt.show()
