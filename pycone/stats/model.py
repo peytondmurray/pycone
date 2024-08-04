@@ -226,10 +226,7 @@ class ThreeYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...] | np.ndarray,
-    ) -> np.ndarray:
+    def posterior_predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
         """Generate a set of independent posterior predictive samples.
 
         Parameters
@@ -364,9 +361,7 @@ class ScaledThreeYearsPreceedingModel(Model):
             return -np.inf
         return np.log(prior)
 
-    def log_likelihood_vector(
-        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
         """Compute the log likelihood vector.
 
         The nansum of this vector returns the log likelihood. Data must be contiguous.
@@ -375,10 +370,6 @@ class ScaledThreeYearsPreceedingModel(Model):
         ----------
         theta : tuple[float, ...]
             Parameters of the model
-        f : np.ndarray
-            Temperature data
-        c : np.ndarray
-            Cone data
 
         Returns
         -------
@@ -399,6 +390,9 @@ class ScaledThreeYearsPreceedingModel(Model):
             lag_last_cone,
         ) = theta
 
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
+
         # Each date has a different c_mu, so this vector is of shape == c.shape
         c_mu: np.ndarray = (
             c0
@@ -410,22 +404,13 @@ class ScaledThreeYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...] | np.ndarray,
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
+    def posterior_predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
         """Generate a set of independent posterior predictive samples.
 
         Parameters
         ----------
         theta : tuple[float, ...]
             Model parameter vector
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone number
 
         Returns
         -------
@@ -445,6 +430,9 @@ class ScaledThreeYearsPreceedingModel(Model):
             lag_gamma,
             lag_last_cone,
         ) = theta
+
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
 
         c_mu: np.ndarray = (
             c0
@@ -544,9 +532,7 @@ class ScaledTwoYearsPreceedingModel(Model):
             return -np.inf
         return np.log(prior)
 
-    def log_likelihood_vector(
-        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
         """Compute the log likelihood vector.
 
         The nansum of this vector returns the log likelihood. Data must be contiguous.
@@ -555,10 +541,6 @@ class ScaledTwoYearsPreceedingModel(Model):
         ----------
         theta : tuple[float, ...]
             Parameters of the model
-        f : np.ndarray
-            Temperature data
-        c : np.ndarray
-            Cone data
 
         Returns
         -------
@@ -566,6 +548,9 @@ class ScaledTwoYearsPreceedingModel(Model):
             Array containing log-likelihood for every data point for the given theta
         """
         c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
 
         # Each date has a different c_mu, so this vector is of shape == c.shape
         c_mu: np.ndarray = (
@@ -577,22 +562,13 @@ class ScaledTwoYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(
-        self,
-        theta: tuple[float, ...],
-        f: np.ndarray,
-        c: np.ndarray,
-    ) -> np.ndarray:
+    def posterior_predictive(self, theta: tuple[float, ...]) -> np.ndarray:
         """Generate a set of independent posterior predictive samples.
 
         Parameters
         ----------
         theta : tuple[float, ...]
             Model parameter vector
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone number
 
         Returns
         -------
@@ -600,6 +576,8 @@ class ScaledTwoYearsPreceedingModel(Model):
             Time series (same shape as `f` and `c`) of independent cone predictions
         """
         c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
 
         c_mu: np.ndarray = (
             c0
@@ -698,9 +676,7 @@ class TwoYearsPreceedingModel(Model):
             return -np.inf
         return np.log(prior)
 
-    def log_likelihood_vector(
-        self, theta: tuple[float, ...], f: np.ndarray, c: np.ndarray
-    ) -> np.ndarray:
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
         """Compute the log likelihood vector.
 
         The nansum of this vector returns the log likelihood. Data must be contiguous.
@@ -709,10 +685,6 @@ class TwoYearsPreceedingModel(Model):
         ----------
         theta : tuple[float, ...]
             Parameters of the model
-        f : np.ndarray
-            Temperature data
-        c : np.ndarray
-            Cone data
 
         Returns
         -------
@@ -720,6 +692,9 @@ class TwoYearsPreceedingModel(Model):
             Array containing log-likelihood for every data point for the given theta
         """
         c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
 
         # Each date has a different c_mu, so this vector is of shape == c.shape
         c_mu: np.ndarray = (
@@ -734,8 +709,6 @@ class TwoYearsPreceedingModel(Model):
     def posterior_predictive(
         self,
         theta: tuple[float, ...],
-        f: np.ndarray,
-        c: np.ndarray,
     ) -> np.ndarray:
         """Generate a set of independent posterior predictive samples.
 
@@ -743,10 +716,6 @@ class TwoYearsPreceedingModel(Model):
         ----------
         theta : tuple[float, ...]
             Model parameter vector
-        f : np.ndarray
-            Temperature
-        c : np.ndarray
-            Cone number
 
         Returns
         -------
@@ -754,6 +723,9 @@ class TwoYearsPreceedingModel(Model):
             Time series (same shape as `f` and `c`) of independent cone predictions
         """
         c0, alpha, beta, width_alpha, width_beta, lag_alpha, lag_beta, lag_last_cone = theta
+
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
 
         c_mu: np.ndarray = (
             c0

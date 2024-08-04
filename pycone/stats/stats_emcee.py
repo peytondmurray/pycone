@@ -17,7 +17,7 @@ from rich.console import Console
 from ..preprocess import load_data
 from ..util import add_days_since_start, read_data
 from .model import Model, ThreeYearsPreceedingModel
-from .transform import StandardizeNormal, Transform
+from .transform import StandardizeNormal
 
 az.style.use("default")
 console = Console()
@@ -101,9 +101,7 @@ def get_data(
     return obs
 
 
-def log_probability(
-    theta: tuple, f: np.ndarray, c: np.ndarray, model: Model
-) -> tuple[float, np.ndarray]:
+def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray]:
     """Calculate the log posterior.
 
     See https://python.arviz.org/en/stable/getting_started/ConversionGuideEmcee.html
@@ -114,10 +112,6 @@ def log_probability(
     ----------
     theta : tuple
         Model parameter vector
-    f : np.ndarray
-        Temperature
-    c : np.ndarray
-        Cone number
     model : Model
         Model for which the log probability is to be calculated
 
@@ -128,9 +122,9 @@ def log_probability(
     """
     lp = model.log_prior(theta)
     if not np.isfinite(lp):
-        return -np.inf, np.full((len(f),), -np.inf)
+        return -np.inf, np.full((len(model.raw_data),), -np.inf)
 
-    log_likelihood_vect = model.log_likelihood_vector(theta, f, c)
+    log_likelihood_vect = model.log_likelihood_vector(theta)
     log_likelihood = np.nansum(log_likelihood_vect)
 
     return lp + log_likelihood, log_likelihood_vect
@@ -250,8 +244,6 @@ def sample_posterior_predictive(
             f"{model.name}_sampler.h5",
             name=f"mcmc_{len(runs)}",
         )
-
-        breakpoint()
 
         samples = sampler.get_chain()
     elif isinstance(chains, str):

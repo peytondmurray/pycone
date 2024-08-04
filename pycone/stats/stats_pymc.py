@@ -8,8 +8,6 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor as pt
-from pytensor.compile.sharedvalue import SharedVariable
-from pytensor.tensor import conv
 from rich.console import Console
 
 from ..preprocess import load_data
@@ -177,6 +175,7 @@ def lagged(c: np.ndarray, lag: int | float) -> np.ndarray:
 
 
 def run_simple_model():
+    """Run a simple model."""
     # Likelihood is going to be poisson-distributed for each site; there's a waiting time
     # distribution for each cone appearing in the stand. There are few enough cones produced for
     # some species that summing them together (for the stand) will not produce a normal
@@ -184,7 +183,7 @@ def run_simple_model():
     data = get_data(impute_time=False)
 
     with pm.Model() as model:
-        days_since_start_data = pm.Data("days_since_start_data", data["days_since_start"])
+        pm.Data("days_since_start_data", data["days_since_start"])
         t_data = pm.Data("t_data", data["t"])
         c_data = pm.Data("c_data", data["c"])
 
@@ -216,7 +215,7 @@ def run_simple_model():
 
         c_mu = pm.Deterministic("c_mu", c0 + alpha * avg_t0_masked)
 
-        c_model = pm.Poisson("c_model", mu=c_mu, observed=c_data)
+        pm.Poisson("c_model", mu=c_mu, observed=c_data)
 
         render_to_terminal(model)
         idata = pm.sample(discard_tuned_samples=False)
@@ -255,16 +254,12 @@ def run_simple_model():
 
 
 def runmodel():
+    """Run the pymc model."""
     data = get_data(impute_time=True)
 
     with pm.Model() as model:
-        n_values = len(data)
-
-        c_vals = data["c"].values
-        f_vals = data["t"].values
-
-        f_data = pm.MutableData("f_data", f_vals)
-        c_data = pm.MutableData("c_data", c_vals)
+        f_data = pm.MutableData("f_data", data["t"].to_numpy())
+        c_data = pm.MutableData("c_data", data["c"].to_numpy())
 
         # Priors
         c0 = pm.Uniform("c0", lower=0, upper=1000)
@@ -288,9 +283,9 @@ def runmodel():
             - lagged(c_data, lag_last_cone),
         )
 
-        c_model = pm.Poisson("c_model", mu=c_mu, observed=c_data)
+        pm.Poisson("c_model", mu=c_mu, observed=c_data)
 
-        # render_to_terminal(model)
+        render_to_terminal(model)
         idata = pm.sample()
         # prior_samples = pm.sample_prior_predictive(1000)
 

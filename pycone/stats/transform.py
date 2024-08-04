@@ -3,26 +3,82 @@ import pandas as pd
 
 
 class Transform:
+    """Class which transforms raw data."""
+
     def __init__(self):
+        """Init the Transform class."""
         pass
 
     def transform(self, data: pd.Series) -> pd.Series:
+        """Transform raw data to a new space.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Data to transform
+
+        Returns
+        -------
+        pd.Series
+            Transformed data
+        """
         raise NotImplementedError
 
     def inverse(self, data: pd.Series) -> pd.Series:
+        """Invert the standardized dataset to recover data in original units.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Dataset to denormalize
+
+        Returns
+        -------
+        pd.Series
+            Unstandardized dataset (i.e. in original units)
+        """
         raise NotImplementedError
 
 
 class IdentityTransform(Transform):
+    """The identity transformation (no transformation)."""
+
     def transform(self, data: pd.Series) -> pd.Series:
+        """Transform the raw data; this is the identity, so this does nothing.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Data to transform
+
+        Returns
+        -------
+        pd.Series
+            Transformed data
+        """
         return data
 
     def inverse(self, data: pd.Series) -> pd.Series:
+        """Invert the dataset; this is the identity, so this does nothing.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Dataset to transform
+
+        Returns
+        -------
+        pd.Series
+            The same dataset
+        """
         return data
 
 
 class StandardizeNormal(Transform):
+    """Transformation which converts normally distributed data to data with mean 0, std 1."""
+
     def __init__(self):
+        """Init the StandardizeNormal class."""
         self.mean = np.nan
         self.std = np.nan
 
