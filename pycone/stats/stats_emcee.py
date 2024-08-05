@@ -132,9 +132,6 @@ def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray]:
 
 def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
     """Run the sampler."""
-    f = model.transformed_data["t"].to_numpy()
-    c = model.transformed_data["c"].to_numpy()
-
     sampler_path = f"{model.name}_sampler.h5"
 
     if pathlib.Path(sampler_path).exists():
@@ -169,7 +166,6 @@ def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
             model.ndim,
             log_prob_fn=functools.partial(log_probability, model=model),
             pool=pool,
-            args=(f, c),
             backend=backend,
         )
         sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
@@ -242,7 +238,7 @@ def sample_posterior_predictive(
 
         sampler = emcee.backends.HDFBackend(
             f"{model.name}_sampler.h5",
-            name=f"mcmc_{len(runs)}",
+            name=f"mcmc_{len(runs) - 1}",
         )
 
         samples = sampler.get_chain()
@@ -264,7 +260,9 @@ def sample_posterior_predictive(
         )
 
     n_steps = len(model.raw_data)
-    posterior_predictive = np.zeros((n_predictions, n_steps), dtype=int)
+
+    # Allocate float array because some values are np.nan (near edge of measured datapoints)
+    posterior_predictive = np.zeros((n_predictions, n_steps), dtype=float)
     for i in tqdm.trange(n_predictions, desc="Sampling the posterior predictive distribution..."):
         posterior_predictive[i, :] = model.posterior_predictive(samples[i, :])
 
@@ -399,6 +397,112 @@ def plot_posterior_predictive(
     return fig
 
 
+def plot_posterior_predictive_one_plot(
+    model: Model,
+    posterior_predictive: np.ndarray | str | None = None,
+    fig: plt.Figure | None = None,
+) -> plt.Figure:
+    """Plot the posterior predictive samples on one plot.
+
+    Parameters
+    ----------
+    model : Model
+        Model for which posterior predictive samples were generated
+    posterior_predictive : np.ndarray | str | None
+        Samples from the posterior predictive distribution
+    fig : plt.Figure | None
+        Figure in which the samples should be plotted
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing a plot of posterior predictive samples
+    """
+    if fig is None:
+        fig = plt.figure()
+
+    if posterior_predictive is None:
+        posterior_predictive = f"posterior_predictive_{model.name}.npy"
+
+    if isinstance(posterior_predictive, str):
+        samples = np.load(posterior_predictive)
+    else:
+        samples = posterior_predictive
+
+    npredictions, nsteps = samples.shape
+
+    ax = fig.subplots(1, 1)
+
+    for i in range(npredictions):
+        if i == 0:
+            ax.plot(samples[i, :], "-k", label="predicted", alpha=0.3)
+        else:
+            ax.plot(samples[i, :], "-k", alpha=0.3)
+    ax.plot(model.raw_data["c"], "-r", label="data")
+
+    return fig
+
+
+def plot_posterior_predictive_density(
+    model: Model,
+    posterior_predictive: np.ndarray | str | None = None,
+    fig: plt.Figure | None = None,
+) -> plt.Figure:
+    """Plot the posterior predictive samples as a density.
+
+    Parameters
+    ----------
+    model : Model
+        Model for which posterior predictive samples were generated
+    posterior_predictive : np.ndarray | str | None
+        Samples from the posterior predictive distribution
+    fig : plt.Figure | None
+        Figure in which the samples should be plotted
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing a plot of posterior predictive samples
+    """
+    if fig is None:
+        fig = plt.figure()
+
+    if posterior_predictive is None:
+        posterior_predictive = f"posterior_predictive_{model.name}.npy"
+
+    if isinstance(posterior_predictive, str):
+        samples = np.load(posterior_predictive)
+    else:
+        samples = posterior_predictive
+
+    npredictions, nsteps = samples.shape
+
+    ax = fig.subplots(1, 1)
+
+    # Choose the bin size so that each cone number is one bin
+    bins = int(np.nanmax(samples))
+    c_range = np.array([np.nanmin(samples), bins])
+
+    pdf = np.zeros((bins, nsteps), dtype=float)
+    for i in tqdm.trange(nsteps, desc="Histogramming the posterior predictive distribution."):
+        values, _ = np.histogram(samples[:, i], bins=bins, range=c_range, density=True)
+        pdf[:, i] = values
+
+    ax.imshow(
+        pdf,
+        extent=[0, nsteps, 0, bins],
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        aspect="auto",
+    )
+
+    ax.set_title("Posterior predictive distribution of cone count")
+    ax.plot(model.raw_data["c"], "-r", label="observed")
+    ax.legend()
+    return fig
+
+
 def plot_figures(
     model: Model,
     chains: str | np.ndarray | None = None,
@@ -434,6 +538,8 @@ if __name__ == "__main__":
         get_data(impute_time=True, site=1), transforms={"t": StandardizeNormal}
     )
     # run_sampler(model, nwalkers=32, nsamples=10000)
-    sample_posterior_predictive(model, n_predictions=10, burn_in=2000)
-    plot_figures(model, burn_in=2000)
+    sample_posterior_predictive(model, n_predictions=100000, burn_in=2000)
+    # plot_figures(model, burn_in=2000)
+    # plot_posterior_predictive_one_plot(model)
+    plot_posterior_predictive_density(model)
     plt.show()

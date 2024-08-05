@@ -124,9 +124,9 @@ class ThreeYearsPreceedingModel(Model):
         return np.vstack(
             (
                 st.norm.rvs(loc=30, scale=10, size=nwalkers),  # c0
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # alpha
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # beta
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # gamma
+                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # alpha
+                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # beta
+                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # gamma
                 st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_alpha
                 st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_beta
                 st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_gamma
@@ -166,9 +166,9 @@ class ThreeYearsPreceedingModel(Model):
 
         priors = [
             st.uniform.pdf(c0, loc=0, scale=1000),
-            st.halfnorm.pdf(alpha, scale=10),
-            st.halfnorm.pdf(beta, scale=10),
-            st.halfnorm.pdf(gamma, scale=10),
+            st.norm.pdf(alpha, loc=0, scale=10),
+            st.norm.pdf(beta, loc=0, scale=10),
+            st.norm.pdf(gamma, loc=0, scale=10),
             st.uniform.pdf(width_alpha, loc=1, scale=100),
             st.uniform.pdf(width_beta, loc=1, scale=100),
             st.uniform.pdf(width_gamma, loc=1, scale=100),
@@ -265,7 +265,16 @@ class ThreeYearsPreceedingModel(Model):
             + gamma * mavg(f, width_gamma, lag_gamma)
             - lagged(c, lag_last_cone)
         )
-        return st.poisson.rvs(c_mu)
+
+        # Mask off the bad data points. These arise because in the
+        # log_probability function, we take `np.nansum` of the log
+        # probabilities to ignore points near to regions where there
+        # is no measured data.
+        mask = (c_mu < 0) | np.isnan(c_mu)
+        c_mu[mask] = 0
+        c_pred = st.poisson.rvs(c_mu).astype(float)
+        c_pred[mask] = np.nan
+        return c_pred
 
 
 class ScaledThreeYearsPreceedingModel(Model):
