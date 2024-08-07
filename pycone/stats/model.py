@@ -18,6 +18,7 @@ class Model:
         self.ndim = len(self.labels)
         self.raw_data = data
         self.transforms = {}
+        self.priors: list[st.rv_continuous] = []
 
         transformed_data = {}
         for col in data.columns:
@@ -72,20 +73,21 @@ class Model:
         """
         raise NotImplementedError
 
-    def posterior_predictive(self, theta: tuple[float, ...]) -> np.ndarray:
-        """Generate a sample from the posterior predictive distribution.
+    def predictive(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Generate a sample from the prior or posterior predictive distributions.
 
         Parameters
         ----------
         theta : tuple[float, ...]
-            Tuple of model parameters
+            Tuple of model parameters. Can be either drawn from the posterior distribution,
+            in which case the output will be samples of the posterior predictive distribution,
+            or from the priors themselves, which will yield the prior predictive distribution
 
         Returns
         -------
         np.ndarray
-            Array of data generated from the posterior predictive distribution; has the
+            Array of data generated from the prior or posterior predictive distribution; has the
             same shape as the raw data `self.raw_data['c']`
-
         """
         raise NotImplementedError
 
@@ -107,6 +109,22 @@ class ThreeYearsPreceedingModel(Model):
         "lag_gamma",
         "lag_last_cone",
     ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.priors = [
+            st.uniform(loc=0, scale=1000),
+            st.norm(loc=0, scale=10),
+            st.norm(loc=0, scale=10),
+            st.norm(loc=0, scale=10),
+            st.uniform(loc=1, scale=100),
+            st.uniform(loc=1, scale=100),
+            st.uniform(loc=1, scale=100),
+            st.uniform(loc=185, scale=365),
+            st.uniform(loc=550, scale=365),
+            st.uniform(loc=915, scale=365),
+            st.uniform(loc=915, scale=1095),
+        ]
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
         """Generate initial positions for the MCMC walkers.
@@ -150,35 +168,8 @@ class ThreeYearsPreceedingModel(Model):
         float
             Log prior probability
         """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
+        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
 
-        priors = [
-            st.uniform.pdf(c0, loc=0, scale=1000),
-            st.norm.pdf(alpha, loc=0, scale=10),
-            st.norm.pdf(beta, loc=0, scale=10),
-            st.norm.pdf(gamma, loc=0, scale=10),
-            st.uniform.pdf(width_alpha, loc=1, scale=100),
-            st.uniform.pdf(width_beta, loc=1, scale=100),
-            st.uniform.pdf(width_gamma, loc=1, scale=100),
-            st.uniform.pdf(lag_alpha, loc=185, scale=365),
-            st.uniform.pdf(lag_beta, loc=550, scale=365),
-            st.uniform.pdf(lag_gamma, loc=915, scale=365),
-            st.uniform.pdf(lag_last_cone, loc=915, scale=1095),
-        ]
-
-        prior = np.prod(priors)
         if prior <= 0 or np.isnan(prior):
             return -np.inf
         return np.log(prior)
@@ -226,8 +217,18 @@ class ThreeYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+    def sample_prior(self) -> np.ndarray:
+        """Generate a sample from the prior distribution.
+
+        Returns
+        -------
+        np.ndarray
+            Array of length self.ndim containing a single prior sample
+        """
+        return np.array([dist.rvs() for dist in self.priors])
+
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------
@@ -413,8 +414,8 @@ class ScaledThreeYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------
@@ -571,8 +572,8 @@ class ScaledTwoYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(self, theta: tuple[float, ...]) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+    def predictive(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------
@@ -715,11 +716,11 @@ class TwoYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(
+    def predictive(
         self,
         theta: tuple[float, ...],
     ) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------

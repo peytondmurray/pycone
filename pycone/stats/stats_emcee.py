@@ -266,12 +266,46 @@ def sample_posterior_predictive(
     for i in tqdm.trange(n_predictions, desc="Sampling the posterior predictive distribution..."):
         posterior_predictive[i, :] = model.posterior_predictive(samples[i, :])
 
-    # `model.posterior_predictive` returns _transformed_ predictions. Invert the transformed
-    # predictions here rather than inside `model.posterior_predictive` for efficiency.
+    # `model.predictive` returns _transformed_ predictions. Invert the transformed
+    # predictions here rather than inside `model.predictive` for efficiency.
     posterior_predictive = model.transforms["c"].inverse(posterior_predictive)
 
     np.save(f"posterior_predictive_{model.name}.npy", posterior_predictive)
     return posterior_predictive
+
+
+def sample_prior_predictive(model: Model, n_predictions: int | None = None) -> np.ndarray:
+    """Sample from the prior predictive distribution.
+
+    Parameters
+    ----------
+    model : Model
+        Model for which prior predictive samples are to be generated
+    n_predictions : int | None
+        Number of predictions to make
+
+    Returns
+    -------
+    np.ndarray
+        Prior predictive samples for the number of cones
+    """
+    n_steps = len(model.raw_data)
+
+    prior_samples = np.zeros((n_predictions, model.ndim), dtype=float)
+    for i in tqdm.trange(n_predictions, desc="Sampling the prior distribution..."):
+        prior_samples[i, :] = model.sample_prior()
+
+    # Allocate float array because some values are np.nan (near edge of measured datapoints)
+    prior_predictive = np.zeros((n_predictions, n_steps), dtype=float)
+    for i in tqdm.trange(n_predictions, desc="Sampling the prior predictive distribution..."):
+        prior_predictive[i, :] = model.predictive(prior_samples[i, :])
+
+    # `model.predictive` returns _transformed_ predictions. Invert the transformed
+    # predictions here rather than inside `model.predictive` for efficiency.
+    prior_predictive = model.transforms["c"].inverse(prior_predictive)
+
+    np.save(f"prior_predictive_{model.name}.npy", prior_predictive)
+    return prior_predictive
 
 
 def plot_chains(
