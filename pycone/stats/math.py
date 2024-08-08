@@ -32,7 +32,6 @@ def mavg(f: np.ndarray, width: float | int, lag: float | int) -> np.ndarray:
     average[-width:] = np.nan
 
     result = np.full_like(f, np.nan, dtype=float)
-    # result[:-lag] = average[lag:]
     result[lag:] = average[:-lag]
     return result
 
@@ -61,5 +60,4 @@ def lagged(c: np.ndarray, lag: int | float) -> np.ndarray:
 
     result = np.full_like(c, np.nan, dtype=float)
     result[lag:] = c[:-lag]
-    # result[:-lag] = c[lag:]
     return result

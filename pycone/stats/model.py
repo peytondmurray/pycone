@@ -73,6 +73,16 @@ class Model:
         """
         raise NotImplementedError
 
+    def sample_prior(self) -> np.ndarray:
+        """Generate a sample from the prior distribution.
+
+        Returns
+        -------
+        np.ndarray
+            Array of length self.ndim containing a single prior sample
+        """
+        return np.array([dist.rvs() for dist in self.priors])
+
     def predictive(self, theta: tuple[float, ...]) -> np.ndarray:
         """Generate a sample from the prior or posterior predictive distributions.
 
@@ -111,6 +121,7 @@ class ThreeYearsPreceedingModel(Model):
     ]
 
     def __init__(self, *args, **kwargs):
+        """Instantiate a ThreeYearsPreceedingModel."""
         super().__init__(*args, **kwargs)
         self.priors = [
             st.uniform(loc=0, scale=1000),
@@ -174,20 +185,19 @@ class ThreeYearsPreceedingModel(Model):
             return -np.inf
         return np.log(prior)
 
-    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
-        """Compute the log likelihood vector.
-
-        The nansum of this vector returns the log likelihood. Data must be contiguous.
+    def compute_c_mu(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the expected number of cones from the given parameters.
 
         Parameters
         ----------
         theta : tuple[float, ...]
-            Parameters of the model
+            Tuple of model parameters
 
         Returns
         -------
         np.ndarray
-            Array containing log-likelihood for every data point for the given theta
+            Expected number of cones for the entire length of time spanned
+            by the dataset; should be of length self.raw_data.shape[0]
         """
         (
             c0,
@@ -206,8 +216,7 @@ class ThreeYearsPreceedingModel(Model):
         f = self.transformed_data["t"].to_numpy()
         c = self.transformed_data["c"].to_numpy()
 
-        # Each date has a different c_mu, so this vector is of shape == c.shape
-        c_mu: np.ndarray = (
+        return (
             c0
             + alpha * mavg(f, width_alpha, lag_alpha)
             + beta * mavg(f, width_beta, lag_beta)
@@ -215,17 +224,27 @@ class ThreeYearsPreceedingModel(Model):
             - lagged(c, lag_last_cone)
         )
 
-        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the log likelihood vector.
 
-    def sample_prior(self) -> np.ndarray:
-        """Generate a sample from the prior distribution.
+        The nansum of this vector returns the log likelihood. Data must be contiguous.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
 
         Returns
         -------
         np.ndarray
-            Array of length self.ndim containing a single prior sample
+            Array containing log-likelihood for every data point for the given theta
         """
-        return np.array([dist.rvs() for dist in self.priors])
+        c = self.transformed_data["c"].to_numpy()
+
+        c_mu = self.compute_c_mu(theta)
+
+        # Each date has a different c_mu, so this vector is of shape == c.shape
+        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
     def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
         """Generate a set of independent prior or posterior predictive samples.
@@ -242,30 +261,7 @@ class ThreeYearsPreceedingModel(Model):
             Note that this returns _transformed_ predictions, not the predictions in the original
             units.
         """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        f = self.transformed_data["t"].to_numpy()
-        c = self.transformed_data["c"].to_numpy()
-
-        c_mu: np.ndarray = (
-            c0
-            + alpha * mavg(f, width_alpha, lag_alpha)
-            + beta * mavg(f, width_beta, lag_beta)
-            + gamma * mavg(f, width_gamma, lag_gamma)
-            - lagged(c, lag_last_cone)
-        )
+        c_mu = self.compute_c_mu(theta)
 
         # Mask off the bad data points. These arise because in the
         # log_probability function, we take `np.nansum` of the log

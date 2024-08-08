@@ -264,7 +264,7 @@ def sample_posterior_predictive(
     # Allocate float array because some values are np.nan (near edge of measured datapoints)
     posterior_predictive = np.zeros((n_predictions, n_steps), dtype=float)
     for i in tqdm.trange(n_predictions, desc="Sampling the posterior predictive distribution..."):
-        posterior_predictive[i, :] = model.posterior_predictive(samples[i, :])
+        posterior_predictive[i, :] = model.predictive(samples[i, :])
 
     # `model.predictive` returns _transformed_ predictions. Invert the transformed
     # predictions here rather than inside `model.predictive` for efficiency.
