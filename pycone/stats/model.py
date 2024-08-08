@@ -18,6 +18,7 @@ class Model:
         self.ndim = len(self.labels)
         self.raw_data = data
         self.transforms = {}
+        self.priors: list[st.rv_continuous] = []
 
         transformed_data = {}
         for col in data.columns:
@@ -72,20 +73,31 @@ class Model:
         """
         raise NotImplementedError
 
-    def posterior_predictive(self, theta: tuple[float, ...]) -> np.ndarray:
-        """Generate a sample from the posterior predictive distribution.
-
-        Parameters
-        ----------
-        theta : tuple[float, ...]
-            Tuple of model parameters
+    def sample_prior(self) -> np.ndarray:
+        """Generate a sample from the prior distribution.
 
         Returns
         -------
         np.ndarray
-            Array of data generated from the posterior predictive distribution; has the
-            same shape as the raw data `self.raw_data['c']`
+            Array of length self.ndim containing a single prior sample
+        """
+        return np.array([dist.rvs() for dist in self.priors])
 
+    def predictive(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Generate a sample from the prior or posterior predictive distributions.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters. Can be either drawn from the posterior distribution,
+            in which case the output will be samples of the posterior predictive distribution,
+            or from the priors themselves, which will yield the prior predictive distribution
+
+        Returns
+        -------
+        np.ndarray
+            Array of data generated from the prior or posterior predictive distribution; has the
+            same shape as the raw data `self.raw_data['c']`
         """
         raise NotImplementedError
 
@@ -108,6 +120,23 @@ class ThreeYearsPreceedingModel(Model):
         "lag_last_cone",
     ]
 
+    def __init__(self, *args, **kwargs):
+        """Instantiate a ThreeYearsPreceedingModel."""
+        super().__init__(*args, **kwargs)
+        self.priors = [
+            st.uniform(loc=0, scale=1000),
+            st.norm(loc=0, scale=10),
+            st.norm(loc=0, scale=10),
+            st.norm(loc=0, scale=10),
+            st.uniform(loc=1, scale=100),
+            st.uniform(loc=1, scale=100),
+            st.uniform(loc=1, scale=100),
+            st.uniform(loc=185, scale=365),
+            st.uniform(loc=550, scale=365),
+            st.uniform(loc=915, scale=365),
+            st.uniform(loc=915, scale=1095),
+        ]
+
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
         """Generate initial positions for the MCMC walkers.
 
@@ -124,9 +153,9 @@ class ThreeYearsPreceedingModel(Model):
         return np.vstack(
             (
                 st.norm.rvs(loc=30, scale=10, size=nwalkers),  # c0
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # alpha
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # beta
-                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # gamma
+                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # alpha
+                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # beta
+                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # gamma
                 st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_alpha
                 st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_beta
                 st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_gamma
@@ -150,6 +179,26 @@ class ThreeYearsPreceedingModel(Model):
         float
             Log prior probability
         """
+        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+
+        if prior <= 0 or np.isnan(prior):
+            return -np.inf
+        return np.log(prior)
+
+    def compute_c_mu(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the expected number of cones from the given parameters.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+
+        Returns
+        -------
+        np.ndarray
+            Expected number of cones for the entire length of time spanned
+            by the dataset; should be of length self.raw_data.shape[0]
+        """
         (
             c0,
             alpha,
@@ -164,24 +213,16 @@ class ThreeYearsPreceedingModel(Model):
             lag_last_cone,
         ) = theta
 
-        priors = [
-            st.uniform.pdf(c0, loc=0, scale=1000),
-            st.halfnorm.pdf(alpha, scale=10),
-            st.halfnorm.pdf(beta, scale=10),
-            st.halfnorm.pdf(gamma, scale=10),
-            st.uniform.pdf(width_alpha, loc=1, scale=100),
-            st.uniform.pdf(width_beta, loc=1, scale=100),
-            st.uniform.pdf(width_gamma, loc=1, scale=100),
-            st.uniform.pdf(lag_alpha, loc=185, scale=365),
-            st.uniform.pdf(lag_beta, loc=550, scale=365),
-            st.uniform.pdf(lag_gamma, loc=915, scale=365),
-            st.uniform.pdf(lag_last_cone, loc=915, scale=1095),
-        ]
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
 
-        prior = np.prod(priors)
-        if prior <= 0 or np.isnan(prior):
-            return -np.inf
-        return np.log(prior)
+        return (
+            c0
+            + alpha * mavg(f, width_alpha, lag_alpha)
+            + beta * mavg(f, width_beta, lag_beta)
+            + gamma * mavg(f, width_gamma, lag_gamma)
+            - lagged(c, lag_last_cone)
+        )
 
     def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
         """Compute the log likelihood vector.
@@ -198,36 +239,15 @@ class ThreeYearsPreceedingModel(Model):
         np.ndarray
             Array containing log-likelihood for every data point for the given theta
         """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
-
-        f = self.transformed_data["t"].to_numpy()
         c = self.transformed_data["c"].to_numpy()
 
-        # Each date has a different c_mu, so this vector is of shape == c.shape
-        c_mu: np.ndarray = (
-            c0
-            + alpha * mavg(f, width_alpha, lag_alpha)
-            + beta * mavg(f, width_beta, lag_beta)
-            + gamma * mavg(f, width_gamma, lag_gamma)
-            - lagged(c, lag_last_cone)
-        )
+        c_mu = self.compute_c_mu(theta)
 
+        # Each date has a different c_mu, so this vector is of shape == c.shape
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------
@@ -241,31 +261,17 @@ class ThreeYearsPreceedingModel(Model):
             Note that this returns _transformed_ predictions, not the predictions in the original
             units.
         """
-        (
-            c0,
-            alpha,
-            beta,
-            gamma,
-            width_alpha,
-            width_beta,
-            width_gamma,
-            lag_alpha,
-            lag_beta,
-            lag_gamma,
-            lag_last_cone,
-        ) = theta
+        c_mu = self.compute_c_mu(theta)
 
-        f = self.transformed_data["t"].to_numpy()
-        c = self.transformed_data["c"].to_numpy()
-
-        c_mu: np.ndarray = (
-            c0
-            + alpha * mavg(f, width_alpha, lag_alpha)
-            + beta * mavg(f, width_beta, lag_beta)
-            + gamma * mavg(f, width_gamma, lag_gamma)
-            - lagged(c, lag_last_cone)
-        )
-        return st.poisson.rvs(c_mu)
+        # Mask off the bad data points. These arise because in the
+        # log_probability function, we take `np.nansum` of the log
+        # probabilities to ignore points near to regions where there
+        # is no measured data.
+        mask = (c_mu < 0) | np.isnan(c_mu)
+        c_mu[mask] = 0
+        c_pred = st.poisson.rvs(c_mu).astype(float)
+        c_pred[mask] = np.nan
+        return c_pred
 
 
 class ScaledThreeYearsPreceedingModel(Model):
@@ -404,8 +410,8 @@ class ScaledThreeYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------
@@ -562,8 +568,8 @@ class ScaledTwoYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(self, theta: tuple[float, ...]) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+    def predictive(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------
@@ -706,11 +712,11 @@ class TwoYearsPreceedingModel(Model):
 
         return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
-    def posterior_predictive(
+    def predictive(
         self,
         theta: tuple[float, ...],
     ) -> np.ndarray:
-        """Generate a set of independent posterior predictive samples.
+        """Generate a set of independent prior or posterior predictive samples.
 
         Parameters
         ----------
