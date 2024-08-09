@@ -12,12 +12,25 @@ import numpy as np
 import pandas as pd
 import rich.progress as rp
 import tarmac
+from matplotlib.collections import LineCollection
 from rich.console import Console
 
 from ..preprocess import load_data
 from ..util import add_days_since_start, read_data
-from .model import ITKModel, Model, ThreeYearsPreceedingModel, TYPKelvinModel  # noqa: F401
-from .transform import StandardizeNormal, ToKelvinBeforeStandardizeHalfNorm  # noqa: F401
+from .math import (
+    backward_integral,
+)
+from .model import (  # noqa: F401
+    ITKModel,
+    Model,
+    ThreeYearsPreceedingModel,
+    TYPKelvinModel,
+)
+from .transform import (  # noqa: F401
+    StandardizeNormal,
+    ToKelvin,
+    ToKelvinBeforeStandardizeHalfNorm,
+)
 
 az.style.use("default")
 console = Console()
@@ -443,7 +456,7 @@ def plot_posterior_predictive_one_plot(
     model: Model,
     posterior_predictive: np.ndarray | str | None = None,
     fig: plt.Figure | None = None,
-    max_traces: int = 40,
+    max_traces: int = 100,
 ) -> plt.Figure:
     """Plot the posterior predictive samples on one plot.
 
@@ -477,10 +490,19 @@ def plot_posterior_predictive_one_plot(
     npredictions, nsteps = samples.shape
 
     ax = fig.subplots(1, 1)
-    for i in range(max_traces):
-        ax.plot(samples[i, :], "-k", alpha=0.3)
-    ax.plot(model.raw_data["c"], "-r", label="data")
+    day = np.arange(samples.shape[1])
 
+    lines = LineCollection(
+        [np.vstack((day, samples[i, :])).T for i in range(min(max_traces, samples.shape[0]))],
+        colors="k",
+        alpha=0.3,
+    )
+
+    ax.add_collection(lines)
+
+    ax.plot(model.raw_data["c"], "-r", label="data")
+    ax.set_title("Posterior predictive distribution of cone count")
+    ax.legend()
     return fig
 
 
@@ -611,7 +633,7 @@ def plot_prior_predictive_one_plot(
     model: Model,
     samples: np.ndarray | None | str = None,
     fig: plt.Figure | None = None,
-    max_traces: int = 40,
+    max_traces: int = 100,
 ) -> plt.Figure:
     """Plot the prior predictive cone counts."""
     if fig is None:
@@ -624,9 +646,15 @@ def plot_prior_predictive_one_plot(
         samples = np.load(samples)
 
     ax = fig.subplots(1, 1)
-    for i in range(max_traces):
-        ax.plot(samples[i, :], "-k", alpha=0.3)
+    day = np.arange(samples.shape[1])
+    lines = LineCollection(
+        [np.vstack((day, samples[i, :])).T for i in range(min(max_traces, samples.shape[0]))],
+        colors="k",
+        alpha=0.3,
+    )
+    ax.add_collection(lines)
     ax.plot(model.raw_data["c"], "-r", label="observed")
+    ax.set_title("Prior predictive distribution of cone count")
     ax.legend()
     return fig
 
@@ -693,21 +721,42 @@ def plot_figures(
     plot_posterior_corner(model, chains, burn_in=burn_in)
 
 
+def plot_data(model):
+    fig, ax = plt.subplots(2, 1)
+
+    # ax[0].plot(model.raw_data['t'], '.k', label='raw temperature')
+    ax[0].plot(model.transformed_data["t"], ".r", label="transformed data")
+    ax[0].plot(backward_integral(model.transformed_data["t"], 100), ".b", label="backward_integral")
+
+    ax[1].plot(model.raw_data["c"], ".k", label="raw temperature")
+    ax[1].plot(model.transformed_data["c"], ".r", label="transformed data")
+
+    fig.legend()
+
+    return fig
+
+
 if __name__ == "__main__":
     model = ITKModel(
-        get_data(impute_time=True, site=1), transforms={"t": ToKelvinBeforeStandardizeHalfNorm}
+        get_data(impute_time=True, site=1),
+        # transforms={"t": ToKelvin},
+        transforms={"t": ToKelvinBeforeStandardizeHalfNorm},
     )
     # run_sampler(model, nwalkers=32, nsamples=10000)
 
+    # plot_data(model)
     # plot_chains(model)
-    # plot_posterior_corner(model)
 
-    # sample_posterior_predictive(model, n_predictions=10000, burn_in=9000)
+    # sample_posterior_predictive(model, n_predictions=10000, burn_in=1000)
     # sample_prior_predictive(model, n_predictions=10000)
 
+    # plot_posterior_corner(model)
+    # plot_prior_corner(model)
+
     # plot_posterior_predictive_one_plot(model)
-    # plot_prior_predictive_one_plot(model)
-    plot_posterior_predictive_density(model)
-    plot_prior_predictive_density(model)
-    plot_prior_corner(model)
+    plot_prior_predictive_one_plot(model)
+
+    # plot_posterior_predictive_density(model)
+    # plot_prior_predictive_density(model)
+
     plt.show()

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import scipy.optimize as so
 import scipy.special as ss
 import scipy.stats as st
 
@@ -129,6 +130,8 @@ class ITKModel(Model):
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
         """Generate initial positions for the MCMC walkers.
 
+        Init in a gaussian ball around the max of the likelihood.
+
         Parameters
         ----------
         nwalkers : int
@@ -139,6 +142,20 @@ class ITKModel(Model):
         np.ndarray
             Array of shape (nwalkers, self.ndim)
         """
+        # # Minimize the negative log likelihood
+        # res = so.minimize(
+        #     lambda theta: -np.nansum(self.log_likelihood_vector(theta)),
+        #     x0=[5, 5, 720, 1095],
+        #     bounds=[
+        #         (0, 1000),
+        #         (0, 100),
+        #         (365, 2000),
+        #         (915, 5000),
+        #     ]
+        # )
+        # print(f"Max log likelihood: {res.x}")
+        # return res.x + st.norm.rvs(loc=0, scale=1, size=(nwalkers, self.ndim))
+
         return np.vstack(
             (
                 st.norm.rvs(loc=10, scale=2, size=nwalkers),  # c0

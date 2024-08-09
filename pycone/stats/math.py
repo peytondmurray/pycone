@@ -21,8 +21,8 @@ def backward_integral(f: np.ndarray, t0: int | float) -> np.ndarray:
     result = np.full_like(f, np.nan, dtype=float)
     average = np.convolve(f, np.ones(shape=(t0,), dtype="float"), mode="same")
 
-    average[width:] = np.nan
-    average[:-width] = np.nan
+    average[:width] = np.nan
+    average[-width:] = np.nan
 
     result[width:] = average[:-width]
     return result

@@ -119,6 +119,70 @@ class StandardizeNormal(Transform):
         return data * self.std + self.mean
 
 
+class ToKelvin(Transform):
+    """Transformation which converts temperature to Kelvin."""
+
+    def fahrenheit_to_kelvin(self, data: pd.Series) -> pd.Series:
+        """Conver fahrenheit to kelvin.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Fahrenheit temperatures
+
+        Returns
+        -------
+        pd.Series
+            Kelvin temperatures
+        """
+        return (data - 32) * 5 / 9 + 273.15
+
+    def kelvin_to_fahrenheit(self, data: pd.Series) -> pd.Series:
+        """Convert kelvin to fahrenheit.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Kelvin temperatures
+
+        Returns
+        -------
+        pd.Series
+            Fahrenheit temperatures
+        """
+        return (data - 273.15) * 9 / 5 + 32
+
+    def transform(self, data: pd.Series) -> pd.Series:
+        """Standardize the temperature data.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Temperature dataset
+
+        Returns
+        -------
+        pd.Series
+            Kelvin temperature; guaranteed to be positive
+        """
+        return self.fahrenheit_to_kelvin(data)
+
+    def inverse(self, data: pd.Series) -> pd.Series:
+        """Invert the half-normed data to recover data in original units.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Dataset to invert
+
+        Returns
+        -------
+        pd.Series
+            Fahrenheit dataset
+        """
+        return self.kelvin_to_fahrenheit(data)
+
+
 class ToKelvinBeforeStandardizeHalfNorm(Transform):
     """Transformation which converts fahrenheit temperatures to kelvin before a half-norm transformation."""
 
