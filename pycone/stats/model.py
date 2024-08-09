@@ -3,7 +3,7 @@ import pandas as pd
 import scipy.special as ss
 import scipy.stats as st
 
-from .math import lagged, mavg
+from .math import backward_integral, lagged, mavg
 from .transform import IdentityTransform
 
 
@@ -102,6 +102,320 @@ class Model:
         raise NotImplementedError
 
 
+class ITKModel(Model):
+    """Model which Integrates the Temperature (in Kelvin).
+
+    c_mu = c0 + alpha*integral_{t0}^{t}(T) - c[t - lag]
+    """
+
+    name = "itk"
+    labels = [
+        "c0",
+        "alpha",
+        "t0",
+        "lag_last_cone",
+    ]
+
+    def __init__(self, *args, **kwargs):
+        """Init an ITKModel."""
+        super().__init__(*args, **kwargs)
+        self.priors = [
+            st.halfnorm(loc=0, scale=10),  # c0
+            st.halfnorm(loc=0, scale=10),  # alpha
+            st.uniform(loc=365, scale=1095),  # t0
+            st.uniform(loc=915, scale=1095),  # lag_last_cone
+        ]
+
+    def initialize(self, nwalkers: int = 32) -> np.ndarray:
+        """Generate initial positions for the MCMC walkers.
+
+        Parameters
+        ----------
+        nwalkers : int
+            Number of walkers to generate positions for
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (nwalkers, self.ndim)
+        """
+        return np.vstack(
+            (
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # c0
+                st.norm.rvs(loc=10, scale=5, size=nwalkers),  # alpha
+                st.norm.rvs(loc=720, scale=15, size=nwalkers),  # t0
+                st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_last_cone
+            )
+        ).T
+
+    def log_prior(self, theta: tuple[float, ...]) -> float:
+        """Compute the log prior probability.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        float
+            Log prior probability
+        """
+        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+
+        if prior <= 0 or np.isnan(prior):
+            return -np.inf
+        return np.log(prior)
+
+    def compute_c_mu(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the expected number of cones from the given parameters.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+
+        Returns
+        -------
+        np.ndarray
+            Expected number of cones for the entire length of time spanned
+            by the dataset; should be of length self.raw_data.shape[0]
+        """
+        (
+            c0,
+            alpha,
+            t0,
+            lag_last_cone,
+        ) = theta
+
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
+
+        return c0 + alpha * backward_integral(f, t0) - lagged(c, lag_last_cone)
+
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the log likelihood vector.
+
+        The nansum of this vector returns the log likelihood. Data must be contiguous.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        np.ndarray
+            Array containing log-likelihood for every data point for the given theta
+        """
+        c = self.transformed_data["c"].to_numpy()
+
+        c_mu = self.compute_c_mu(theta)
+
+        # Each date has a different c_mu, so this vector is of shape == c.shape
+        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Model parameter vector
+
+        Returns
+        -------
+        np.ndarray
+            Time series (same shape as `self.raw_data['f']`) of independent cone predictions.
+            Note that this returns _transformed_ predictions, not the predictions in the original
+            units.
+        """
+        c_mu = self.compute_c_mu(theta)
+
+        # Mask off the bad data points. These arise because in the
+        # log_probability function, we take `np.nansum` of the log
+        # probabilities to ignore points near to regions where there
+        # is no measured data.
+        mask = (c_mu < 0) | np.isnan(c_mu)
+        c_mu[mask] = 0
+        c_pred = st.poisson.rvs(c_mu).astype(float)
+        c_pred[mask] = np.nan
+        return c_pred
+
+
+class TYPKelvinModel(Model):
+    """Model with terms from temperature contributions for three years before the cone crop."""
+
+    name = "typ_kelvin"
+    labels = [
+        "c0",
+        "alpha",
+        "beta",
+        "gamma",
+        "width_alpha",
+        "width_beta",
+        "width_gamma",
+        "lag_alpha",
+        "lag_beta",
+        "lag_gamma",
+        "lag_last_cone",
+    ]
+
+    def __init__(self, *args, **kwargs):
+        """Instantiate a TYPKelvinModel."""
+        super().__init__(*args, **kwargs)
+        self.priors = [
+            # st.uniform(loc=0, scale=1000), # c0
+            st.halfnorm(loc=0, scale=10),  # c0 - priors are way more controlled with this one
+            st.halfnorm(loc=0, scale=10),  # alpha
+            st.halfnorm(loc=0, scale=10),  # beta
+            st.halfnorm(loc=0, scale=10),  # gamma
+            st.uniform(loc=1, scale=100),  # width_alpha
+            st.uniform(loc=1, scale=100),  # width_beta
+            st.uniform(loc=1, scale=100),  # width_gamma
+            st.uniform(loc=185, scale=365),  # lag_alpha
+            st.uniform(loc=550, scale=365),  # lag_beta
+            st.uniform(loc=915, scale=365),  # lag_gamma
+            st.uniform(loc=915, scale=1095),  # lag_last_cone
+        ]
+
+    def initialize(self, nwalkers: int = 32) -> np.ndarray:
+        """Generate initial positions for the MCMC walkers.
+
+        Parameters
+        ----------
+        nwalkers : int
+            Number of walkers to generate positions for
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (nwalkers, self.ndim)
+        """
+        return np.vstack(
+            (
+                st.norm.rvs(loc=30, scale=10, size=nwalkers),  # c0
+                st.norm.rvs(loc=10, scale=5, size=nwalkers),  # alpha
+                st.norm.rvs(loc=10, scale=5, size=nwalkers),  # beta
+                st.norm.rvs(loc=10, scale=5, size=nwalkers),  # gamma
+                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_alpha
+                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_beta
+                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_gamma
+                st.norm.rvs(loc=365, scale=15, size=nwalkers),  # lag_alpha
+                st.norm.rvs(loc=730, scale=15, size=nwalkers),  # lag_beta
+                st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_gamma
+                st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_last_cone
+            )
+        ).T
+
+    def log_prior(self, theta: tuple[float, ...]) -> float:
+        """Compute the log prior probability.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        float
+            Log prior probability
+        """
+        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+
+        if prior <= 0 or np.isnan(prior):
+            return -np.inf
+        return np.log(prior)
+
+    def compute_c_mu(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the expected number of cones from the given parameters.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+
+        Returns
+        -------
+        np.ndarray
+            Expected number of cones for the entire length of time spanned
+            by the dataset; should be of length self.raw_data.shape[0]
+        """
+        (
+            c0,
+            alpha,
+            beta,
+            gamma,
+            width_alpha,
+            width_beta,
+            width_gamma,
+            lag_alpha,
+            lag_beta,
+            lag_gamma,
+            lag_last_cone,
+        ) = theta
+
+        f = self.transformed_data["t"].to_numpy()
+        c = self.transformed_data["c"].to_numpy()
+
+        return (
+            c0
+            + alpha * mavg(f, width_alpha, lag_alpha)
+            + beta * mavg(f, width_beta, lag_beta)
+            + gamma * mavg(f, width_gamma, lag_gamma)
+            - lagged(c, lag_last_cone)
+        )
+
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the log likelihood vector.
+
+        The nansum of this vector returns the log likelihood. Data must be contiguous.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        np.ndarray
+            Array containing log-likelihood for every data point for the given theta
+        """
+        c = self.transformed_data["c"].to_numpy()
+
+        c_mu = self.compute_c_mu(theta)
+
+        # Each date has a different c_mu, so this vector is of shape == c.shape
+        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Model parameter vector
+
+        Returns
+        -------
+        np.ndarray
+            Time series (same shape as `self.raw_data['f']`) of independent cone predictions.
+            Note that this returns _transformed_ predictions, not the predictions in the original
+            units.
+        """
+        c_mu = self.compute_c_mu(theta)
+
+        # Mask off the bad data points. These arise because in the
+        # log_probability function, we take `np.nansum` of the log
+        # probabilities to ignore points near to regions where there
+        # is no measured data.
+        mask = (c_mu < 0) | np.isnan(c_mu)
+        c_mu[mask] = 0
+        c_pred = st.poisson.rvs(c_mu).astype(float)
+        c_pred[mask] = np.nan
+        return c_pred
+
+
 class ThreeYearsPreceedingModel(Model):
     """Model with terms from temperature contributions for three years before the cone crop."""
 
@@ -124,17 +438,18 @@ class ThreeYearsPreceedingModel(Model):
         """Instantiate a ThreeYearsPreceedingModel."""
         super().__init__(*args, **kwargs)
         self.priors = [
-            st.uniform(loc=0, scale=1000),
-            st.norm(loc=0, scale=10),
-            st.norm(loc=0, scale=10),
-            st.norm(loc=0, scale=10),
-            st.uniform(loc=1, scale=100),
-            st.uniform(loc=1, scale=100),
-            st.uniform(loc=1, scale=100),
-            st.uniform(loc=185, scale=365),
-            st.uniform(loc=550, scale=365),
-            st.uniform(loc=915, scale=365),
-            st.uniform(loc=915, scale=1095),
+            # st.uniform(loc=0, scale=1000), # c0
+            st.halfnorm(loc=0, scale=10),  # c0 - priors are way more controlled with this one
+            st.norm(loc=0, scale=10),  # alpha
+            st.norm(loc=0, scale=10),  # beta
+            st.norm(loc=0, scale=10),  # gamma
+            st.uniform(loc=1, scale=100),  # width_alpha
+            st.uniform(loc=1, scale=100),  # width_beta
+            st.uniform(loc=1, scale=100),  # width_gamma
+            st.uniform(loc=185, scale=365),  # lag_alpha
+            st.uniform(loc=550, scale=365),  # lag_beta
+            st.uniform(loc=915, scale=365),  # lag_gamma
+            st.uniform(loc=915, scale=1095),  # lag_last_cone
         ]
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:

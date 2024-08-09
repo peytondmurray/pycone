@@ -1,6 +1,33 @@
 import numpy as np
 
 
+def backward_integral(f: np.ndarray, t0: int | float) -> np.ndarray:
+    """Sum the values f[i-t0] to f[i], and return the resulting array.
+
+    Parameters
+    ----------
+    f : np.ndarray
+        Temperature
+    t0 : int | float
+        Number of days to sum backward from each date
+
+    Returns
+    -------
+    np.ndarray
+        Sum of the temperature backward from each date
+    """
+    t0 = int(t0)
+    width = t0 // 2
+    result = np.full_like(f, np.nan, dtype=float)
+    average = np.convolve(f, np.ones(shape=(t0,), dtype="float"), mode="same")
+
+    average[width:] = np.nan
+    average[:-width] = np.nan
+
+    result[width:] = average[:-width]
+    return result
+
+
 def mavg(f: np.ndarray, width: float | int, lag: float | int) -> np.ndarray:
     """Calculate a lagged moving average of the dataset.
 
