@@ -17,16 +17,17 @@ from rich.console import Console
 
 from ..preprocess import load_data
 from ..util import add_days_since_start, read_data
-from .math import (
-    backward_integral,
-)
 from .model import (  # noqa: F401
     ITKModel,
     Model,
+    SumModel,
     ThreeYearsPreceedingModel,
     TYPKelvinModel,
 )
 from .transform import (  # noqa: F401
+    B0A1Transform,
+    CumsumTransform,
+    OneDayPerYearCumsumTransform,
     StandardizeNormal,
     ToKelvin,
     ToKelvinBeforeStandardizeHalfNorm,
@@ -135,12 +136,14 @@ def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray]:
     """
     lp = model.log_prior(theta)
     if not np.isfinite(lp):
-        return -np.inf, np.full((len(model.raw_data),), -np.inf)
+        return -np.inf, np.full((len(model.raw_data),), -np.inf), np.full(
+            (len(model.raw_data),), -np.inf
+        )
 
-    log_likelihood_vect = model.log_likelihood_vector(theta)
+    log_likelihood_vect, t_contrib, c_contrib = model.log_likelihood_vector(theta)
     log_likelihood = np.nansum(log_likelihood_vect)
 
-    return lp + log_likelihood, log_likelihood_vect
+    return lp + log_likelihood, t_contrib, c_contrib
 
 
 def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000) -> emcee.EnsembleSampler:
@@ -721,37 +724,90 @@ def plot_figures(
     plot_posterior_corner(model, chains, burn_in=burn_in)
 
 
-def plot_data(model):
+def plot_data(model, burn_in: int = 5000, sampler=None):
+    if sampler is None:
+        sampler = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0")
+    elif isinstance(sampler, str):
+        sampler = emcee.backends.HDFBackend(sampler)
+
+    blobs = sampler.get_blobs()
+
+    bins = 40
+    nsteps = model.raw_data["c"].shape[0]
+
+    # Blobs shape: (nsamples, nwalkers, nblobs, nsteps)
+    t_contrib = blobs[burn_in:, :, 0, :]
+    c_contrib = blobs[burn_in:, :, 1, :]
+
+    c_range = np.array([model.transformed_data["c"].min(), model.transformed_data["c"].max()])
+
+    t_values = np.zeros((bins, nsteps), dtype=float)
+    c_values = np.zeros((bins, nsteps), dtype=float)
+    for i in rp.track(
+        range(nsteps), description="Histogramming the contributions of t and c terms to c_mu."
+    ):
+        t_vals, _ = np.histogram(
+            t_contrib[:, :, i].flatten(), bins=bins, range=c_range, density=True
+        )
+        c_vals, _ = np.histogram(
+            c_contrib[:, :, i].flatten(), bins=bins, range=c_range, density=True
+        )
+
+        t_values[:, i] = t_vals
+        c_values[:, i] = c_vals
+
     fig, ax = plt.subplots(2, 1)
 
+    ax[0].imshow(
+        t_values,
+        extent=[0, nsteps, 0, bins],
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        aspect="auto",
+    )
+    ax[1].imshow(
+        c_values,
+        extent=[0, nsteps, 0, bins],
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        aspect="auto",
+    )
+
+    ax[0].set_title("Contributions of t term to c_mu")
+    ax[1].set_title("Contributions of c term to c_mu")
+
+    # ax.plot(model.raw_data["c"], "-r", label="observed")
+
     # ax[0].plot(model.raw_data['t'], '.k', label='raw temperature')
-    ax[0].plot(model.transformed_data["t"], ".r", label="transformed data")
-    ax[0].plot(backward_integral(model.transformed_data["t"], 100), ".b", label="backward_integral")
+    # ax[0].plot(model.transformed_data["t"], ".r", label="transformed data")
+    # ax[0].plot(backward_integral(model.transformed_data["t"], 100), ".b", label="backward_integral")
 
-    ax[1].plot(model.raw_data["c"], ".k", label="raw temperature")
-    ax[1].plot(model.transformed_data["c"], ".r", label="transformed data")
+    # ax[0].plot(model.raw_data["c"], ".k", label="raw temperature")
+    # ax[0].plot(model.transformed_data["c"], ".r", label="transformed data")
 
-    fig.legend()
+    # fig.legend()
 
     return fig
 
 
 if __name__ == "__main__":
-    model = ITKModel(
+    model = SumModel(
         get_data(impute_time=True, site=1),
-        # transforms={"t": ToKelvin},
-        transforms={"t": ToKelvinBeforeStandardizeHalfNorm},
+        preprocess={"t": CumsumTransform, "c": OneDayPerYearCumsumTransform},
+        transforms={"t": B0A1Transform},
     )
     # run_sampler(model, nwalkers=32, nsamples=10000)
 
     # plot_data(model)
-    # plot_chains(model)
+    plot_chains(model)
 
     # sample_posterior_predictive(model, n_predictions=10000, burn_in=1000)
     # sample_prior_predictive(model, n_predictions=10000)
 
-    # plot_posterior_corner(model)
-    # plot_prior_corner(model)
+    plot_posterior_corner(model)
+    plot_prior_corner(model)
 
     # plot_posterior_predictive_one_plot(model)
     plot_prior_predictive_one_plot(model)

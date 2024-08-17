@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-import scipy.optimize as so
+
+# import scipy.optimize as so
 import scipy.special as ss
 import scipy.stats as st
 
@@ -14,18 +15,26 @@ class Model:
     name: str = ""
     labels: list[str] = []
 
-    def __init__(self, data: pd.DataFrame, transforms: dict[str, type]):
+    def __init__(
+        self, data: pd.DataFrame, preprocess: dict[str, type], transforms: dict[str, type]
+    ):
         """Create a Model."""
         self.ndim = len(self.labels)
-        self.raw_data = data
-        self.transforms = {}
         self.priors: list[st.rv_continuous] = []
+        self.raw_data = data
 
-        transformed_data = {}
+        self.preprocesses = {}
+        preprocessed_data = {}
         for col in data.columns:
-            self.transforms[col] = transforms.get(col, IdentityTransform)()
-            transformed_data[col] = self.transforms[col].transform(data[col])
+            self.preprocesses[col] = preprocess.get(col, IdentityTransform)()
+            preprocessed_data[col] = self.preprocesses[col].transform(self.raw_data[col])
+        self.preprocessed_data = pd.DataFrame(preprocessed_data)
 
+        self.transforms = {}
+        transformed_data = {}
+        for col in self.preprocessed_data.columns:
+            self.transforms[col] = transforms.get(col, IdentityTransform)()
+            transformed_data[col] = self.transforms[col].transform(self.preprocessed_data[col])
         self.transformed_data = pd.DataFrame(transformed_data)
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
@@ -101,6 +110,149 @@ class Model:
             same shape as the raw data `self.raw_data['c']`
         """
         raise NotImplementedError
+
+
+class SumModel(Model):
+    """Model which sums the temperature (in Kelvin) cumulatively.
+
+    c_mu = c0 + alpha*cumsum(T) - cumsum(c)
+    """
+
+    name = "sum"
+    labels = [
+        "c0",
+        "alpha",
+    ]
+    blobs_dtype = [("t_contribution", float), ("cone_contribution", float)]
+
+    def __init__(self, *args, **kwargs):
+        """Init an SumModel."""
+        super().__init__(*args, **kwargs)
+        self.priors = [
+            st.halfnorm(loc=0, scale=10),  # c0
+            st.uniform(loc=0, scale=10),  # alpha
+        ]
+
+    def initialize(self, nwalkers: int = 32) -> np.ndarray:
+        """Generate initial positions for the MCMC walkers.
+
+        Init in a gaussian ball around the max of the likelihood.
+
+        Parameters
+        ----------
+        nwalkers : int
+            Number of walkers to generate positions for
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (nwalkers, self.ndim)
+        """
+        return np.vstack(
+            (
+                st.norm.rvs(loc=10, scale=2, size=nwalkers),  # c0
+                st.norm.rvs(loc=10, scale=5, size=nwalkers),  # alpha
+            )
+        ).T
+
+    def log_prior(self, theta: tuple[float, ...]) -> float:
+        """Compute the log prior probability.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        float
+            Log prior probability
+        """
+        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+
+        if prior <= 0 or np.isnan(prior):
+            return -np.inf
+        return np.log(prior)
+
+    def compute_c_mu(self, theta: tuple[float, ...]) -> np.ndarray:
+        """Compute the expected number of cones from the given parameters.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+
+        Returns
+        -------
+        np.ndarray
+            Expected number of cones for the entire length of time spanned
+            by the dataset; should be of length self.raw_data.shape[0]
+        """
+        (
+            c0,
+            alpha,
+        ) = theta
+
+        t_contribution = alpha * self.transformed_data["t"].to_numpy()
+        cone_contribution = self.transformed_data["c"].to_numpy()
+        c_mu = c0 + t_contribution - cone_contribution
+        return c_mu, t_contribution, cone_contribution
+
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> tuple[np.ndarray, ...]:
+        """Compute the log likelihood vector.
+
+        The nansum of this vector returns the log likelihood. Data must be contiguous.
+        Each date has a different c_mu, so this vector is of shape == c.shape.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        np.ndarray
+            Array containing log-likelihood for every data point for the given theta
+        """
+        c = self.transformed_data["c"].to_numpy()
+        c_mu, t_contribution, c_contribution = self.compute_c_mu(theta)
+
+        # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
+        ll = c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+        ll[ll <= 0] = -np.inf
+
+        return (
+            ll,
+            t_contribution,
+            c_contribution,
+        )
+
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Model parameter vector
+
+        Returns
+        -------
+        np.ndarray
+            Time series (same shape as `self.raw_data['f']`) of independent cone predictions.
+            Note that this returns _transformed_ predictions, not the predictions in the original
+            units.
+        """
+        c_mu, *_ = self.compute_c_mu(theta)
+
+        # Mask off the bad data points. These arise because in the
+        # log_probability function, we take `np.nansum` of the log
+        # probabilities to ignore points near to regions where there
+        # is no measured data.
+        mask = (c_mu < 0) | np.isnan(c_mu)
+        c_mu[mask] = 0
+        c_pred = st.poisson.rvs(c_mu).astype(float)
+        c_pred[mask] = np.nan
+        return c_pred
 
 
 class ITKModel(Model):
