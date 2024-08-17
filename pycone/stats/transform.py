@@ -248,3 +248,8 @@ class CumsumTransform(Transform):
 class OneDayPerYearCumsumTransform(Transform):
     def transform(self, data: pd.Series) -> pd.Series:
         return np.repeat(np.cumsum(data[::365]), 365)[: len(data)].reset_index(drop=True)
+
+
+class KelvinCumsumTransform(Transform):
+    def transform(self, data: pd.Series) -> pd.Series:
+        return math.fahrenheit_to_kelvin(data).cumsum()

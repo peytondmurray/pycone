@@ -25,8 +25,8 @@ from .model import (  # noqa: F401
     TYPKelvinModel,
 )
 from .transform import (  # noqa: F401
-    B0A1Transform,
     CumsumTransform,
+    KelvinCumsumTransform,
     OneDayPerYearCumsumTransform,
     StandardizeNormal,
     ToKelvin,
@@ -115,7 +115,7 @@ def get_data(
     return obs
 
 
-def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray]:
+def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray, np.ndarray]:
     """Calculate the log posterior.
 
     See https://python.arviz.org/en/stable/getting_started/ConversionGuideEmcee.html
@@ -146,34 +146,39 @@ def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray]:
     return lp + log_likelihood, t_contrib, c_contrib
 
 
-def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000) -> emcee.EnsembleSampler:
+def run_sampler(
+    model: Model, nwalkers: int = 32, nsamples: int = 20000, save=True
+) -> emcee.EnsembleSampler:
     """Run the sampler."""
-    sampler_path = f"{model.name}_sampler.h5"
+    if save:
+        sampler_path = f"{model.name}_sampler.h5"
 
-    if pathlib.Path(sampler_path).exists():
-        # Get the number of existing runs in the file
-        with h5py.File(sampler_path, "r") as file:
-            runs = list(file.keys())
+        if pathlib.Path(sampler_path).exists():
+            # Get the number of existing runs in the file
+            with h5py.File(sampler_path, "r") as file:
+                runs = list(file.keys())
 
-        backend = emcee.backends.HDFBackend(
-            f"{model.name}_sampler.h5",
-            name=f"mcmc_{len(runs)}",
-        )
-        old_backend = emcee.backends.HDFBackend(
-            f"{model.name}_sampler.h5",
-            name=f"mcmc_{len(runs) - 1}",
-        )
-        console.log(
-            f"Existing emcee sampler loaded from {model.name}_sampler.h5;"
-            f"Existing samples: {old_backend.iteration}"
-        )
+            backend = emcee.backends.HDFBackend(
+                f"{model.name}_sampler.h5",
+                name=f"mcmc_{len(runs)}",
+            )
+            old_backend = emcee.backends.HDFBackend(
+                f"{model.name}_sampler.h5",
+                name=f"mcmc_{len(runs) - 1}",
+            )
+            console.log(
+                f"Existing emcee sampler loaded from {model.name}_sampler.h5;"
+                f"Existing samples: {old_backend.iteration}"
+            )
+        else:
+            backend = emcee.backends.HDFBackend(
+                f"{model.name}_sampler.h5",
+                name="mcmc_0",
+            )
+            console.log(f"No emcee sampler found at {model.name}_sampler.h5; starting new sampler.")
+            backend.reset(nwalkers, model.ndim)
     else:
-        backend = emcee.backends.HDFBackend(
-            f"{model.name}_sampler.h5",
-            name="mcmc_0",
-        )
-        console.log(f"No emcee sampler found at {model.name}_sampler.h5; starting new sampler.")
-        backend.reset(nwalkers, model.ndim)
+        backend = None
 
     np.random.default_rng(42)
     with Pool(processes=10) as pool:
@@ -795,22 +800,24 @@ def plot_data(model, burn_in: int = 5000, sampler=None):
 if __name__ == "__main__":
     model = SumModel(
         get_data(impute_time=True, site=1),
-        preprocess={"t": CumsumTransform, "c": OneDayPerYearCumsumTransform},
-        transforms={"t": B0A1Transform},
+        preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
+        transforms={},
     )
-    # run_sampler(model, nwalkers=32, nsamples=10000)
+    sampler = run_sampler(model, nwalkers=12, nsamples=10000, save=False)
+
+    chains = sampler.get_chain()
 
     # plot_data(model)
-    plot_chains(model)
+    plot_chains(model, chains)
 
     # sample_posterior_predictive(model, n_predictions=10000, burn_in=1000)
     # sample_prior_predictive(model, n_predictions=10000)
 
-    plot_posterior_corner(model)
-    plot_prior_corner(model)
+    plot_posterior_corner(model, chains)
+    # plot_prior_corner(model)
 
     # plot_posterior_predictive_one_plot(model)
-    plot_prior_predictive_one_plot(model)
+    # plot_prior_predictive_one_plot(model, chains)
 
     # plot_posterior_predictive_density(model)
     # plot_prior_predictive_density(model)

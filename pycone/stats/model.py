@@ -16,12 +16,21 @@ class Model:
     labels: list[str] = []
 
     def __init__(
-        self, data: pd.DataFrame, preprocess: dict[str, type], transforms: dict[str, type]
+        self,
+        data: pd.DataFrame,
+        preprocess: dict[str, type] | None = None,
+        transforms: dict[str, type] | None = None,
     ):
         """Create a Model."""
         self.ndim = len(self.labels)
         self.priors: list[st.rv_continuous] = []
         self.raw_data = data
+
+        if preprocess is None:
+            preprocess = {}
+
+        if transforms is None:
+            transforms = {}
 
         self.preprocesses = {}
         preprocessed_data = {}
@@ -67,7 +76,7 @@ class Model:
         """
         raise NotImplementedError
 
-    def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> tuple[np.ndarray, ...]:
         """Calculate the log likelihood for each data point given the model parameters.
 
         Parameters
@@ -77,9 +86,10 @@ class Model:
 
         Returns
         -------
-        np.ndarray
-            Individual probabilities of observing the data points given the model
-            parameters; has the same shape as the raw data `self.raw_data['c']`
+        tuple[np.ndarray, ...]
+            The first element is the individual probabilities of observing the data points given
+            the model parameters; has the same shape as the raw data `self.raw_data['c']`. The
+            rest of the elements in this tuple are emcee blobs to be stored for later.
         """
         raise NotImplementedError
 
@@ -125,13 +135,25 @@ class SumModel(Model):
     ]
     blobs_dtype = [("t_contribution", float), ("cone_contribution", float)]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        preprocess: dict[str, type] | None = None,
+        transforms: dict[str, type] | None = None,
+    ):
         """Init an SumModel."""
-        super().__init__(*args, **kwargs)
+        super().__init__(data, preprocess, transforms)
+
+        self.nyears = len(data) // 365
+
         self.priors = [
             st.halfnorm(loc=0, scale=10),  # c0
-            st.uniform(loc=0, scale=10),  # alpha
-        ]
+            st.halfnorm(loc=0, scale=1),  # alpha
+        ] + [st.halfnorm(loc=0, scale=10) for _ in range(self.nyears)]
+
+        # Set the labels and ndims for this model, since they depend on the data
+        self.labels = self.labels + [f"R_{i}" for i in range(self.nyears)]
+        self.ndim = len(self.priors)
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
         """Generate initial positions for the MCMC walkers.
@@ -152,6 +174,7 @@ class SumModel(Model):
             (
                 st.norm.rvs(loc=10, scale=2, size=nwalkers),  # c0
                 st.norm.rvs(loc=10, scale=5, size=nwalkers),  # alpha
+                *(st.halfnorm.rvs(loc=0, scale=10, size=nwalkers) for _ in range(self.nyears)),
             )
         ).T
 
@@ -170,11 +193,12 @@ class SumModel(Model):
         """
         prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
 
-        if prior <= 0 or np.isnan(prior):
+        if np.isnan(prior):
             return -np.inf
+
         return np.log(prior)
 
-    def compute_c_mu(self, theta: tuple[float, ...]) -> np.ndarray:
+    def compute_c_mu(self, theta: tuple[float, ...] | np.ndarray) -> tuple[np.ndarray, ...]:
         """Compute the expected number of cones from the given parameters.
 
         Parameters
@@ -184,18 +208,15 @@ class SumModel(Model):
 
         Returns
         -------
-        np.ndarray
+        tuple[np.ndarray, ...]
             Expected number of cones for the entire length of time spanned
             by the dataset; should be of length self.raw_data.shape[0]
         """
-        (
-            c0,
-            alpha,
-        ) = theta
+        (c0, alpha, *r) = theta
 
         t_contribution = alpha * self.transformed_data["t"].to_numpy()
         cone_contribution = self.transformed_data["c"].to_numpy()
-        c_mu = c0 + t_contribution - cone_contribution
+        c_mu = c0 + t_contribution - cone_contribution - np.cumsum(r)
         return c_mu, t_contribution, cone_contribution
 
     def log_likelihood_vector(self, theta: tuple[float, ...]) -> tuple[np.ndarray, ...]:
