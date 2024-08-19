@@ -1,4 +1,3 @@
-# import scipy.stats as st
 import numpy as np
 import pandas as pd
 
@@ -6,6 +5,7 @@ import pandas as pd
 import scipy.special as ss
 import scipy.stats as st
 
+from .. import gsl
 from .math import backward_integral, lagged, mavg
 from .transform import IdentityTransform
 
@@ -46,6 +46,29 @@ class Model:
             self.transforms[col] = transforms.get(col, IdentityTransform)()
             transformed_data[col] = self.transforms[col].transform(self.preprocessed_data[col])
         self.transformed_data = pd.DataFrame(transformed_data)
+
+        self._transformed_data: dict[str, np.ndarray] = {}
+
+    def get_transformed_data(self, col: str) -> np.ndarray:
+        """Get the transformed data for a column.
+
+        If cached, that data is returned; otherwise, cache it first before returning it.
+
+        Parameters
+        ----------
+        col : str
+            Column to get
+
+        Returns
+        -------
+        np.ndarray
+            Column data as an array
+        """
+        if col in self._transformed_data:
+            return self._transformed_data[col]
+
+        self._transformed_data[col] = self.transformed_data[col].to_numpy()
+        return self._transformed_data[col]
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
         """Generate initial positions for the MCMC walkers.
@@ -192,7 +215,13 @@ class SumModel(Model):
         float
             Log prior probability
         """
-        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+        # prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+
+        prior = (
+            gsl.halfnorm_pdf([theta[0]], 10)
+            * gsl.halfnorm_pdf([theta[1]], 1)
+            * np.prod([gsl.halfnorm_pdf([param], 10) for param in theta])
+        )
 
         if np.isnan(prior):
             return -np.inf
@@ -215,10 +244,13 @@ class SumModel(Model):
         """
         (c0, alpha, *r) = theta
 
-        r_arr = np.repeat(np.cumsum(np.array(r)), self.nR * 365)[: len(self.transformed_data["c"])]
+        c_trans = self.get_transformed_data("c")
+        t_trans = self.get_transformed_data("t")
 
-        t_contribution = alpha * self.transformed_data["t"].to_numpy()
-        cone_contribution = self.transformed_data["c"].to_numpy()
+        r_arr = np.repeat(np.cumsum(np.array(r)), self.nR * 365)[: len(c_trans)]
+
+        t_contribution = alpha * t_trans
+        cone_contribution = c_trans
         c_mu = c0 + t_contribution - cone_contribution - r_arr
         return c_mu, t_contribution, cone_contribution
 
@@ -238,7 +270,7 @@ class SumModel(Model):
         np.ndarray
             Array containing log-likelihood for every data point for the given theta
         """
-        c = self.transformed_data["c"].to_numpy()
+        c = self.get_transformed_data("c")
         c_mu, t_contribution, c_contribution = self.compute_c_mu(theta)
 
         # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
