@@ -147,7 +147,7 @@ def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray, np.n
 
 
 def run_sampler(
-    model: Model, nwalkers: int = 32, nsamples: int = 20000, save=True
+    model: Model, nwalkers: int = 32, nsamples: int = 20000, save: bool = True
 ) -> emcee.EnsembleSampler:
     """Run the sampler."""
     if save:
@@ -181,15 +181,22 @@ def run_sampler(
         backend = None
 
     np.random.default_rng(42)
-    with Pool(processes=10) as pool:
-        sampler = emcee.EnsembleSampler(
-            nwalkers,
-            model.ndim,
-            log_prob_fn=functools.partial(log_probability, model=model),
-            pool=pool,
-            backend=backend,
-        )
-        sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    sampler = emcee.EnsembleSampler(
+        nwalkers,
+        model.ndim,
+        log_prob_fn=functools.partial(log_probability, model=model),
+        backend=backend,
+    )
+    sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    # with Pool(processes=10) as pool:
+    #     sampler = emcee.EnsembleSampler(
+    #         nwalkers,
+    #         model.ndim,
+    #         log_prob_fn=functools.partial(log_probability, model=model),
+    #         pool=pool,
+    #         backend=backend,
+    #     )
+    #     sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
 
     return sampler
 
@@ -729,7 +736,7 @@ def plot_figures(
     plot_posterior_corner(model, chains, burn_in=burn_in)
 
 
-def plot_data(model, burn_in: int = 5000, sampler=None):
+def plot_data(model, burn_in: int = 1000, sampler=None):
     if sampler is None:
         sampler = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0")
     elif isinstance(sampler, str):
@@ -803,11 +810,11 @@ if __name__ == "__main__":
         preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
         transforms={},
     )
-    sampler = run_sampler(model, nwalkers=12, nsamples=10000, save=False)
+    sampler = run_sampler(model, nwalkers=64, nsamples=10000, save=False)
 
     chains = sampler.get_chain()
 
-    # plot_data(model)
+    plot_data(model, sampler=sampler)
     plot_chains(model, chains)
 
     # sample_posterior_predictive(model, n_predictions=10000, burn_in=1000)

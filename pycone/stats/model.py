@@ -1,3 +1,4 @@
+# import scipy.stats as st
 import numpy as np
 import pandas as pd
 
@@ -23,7 +24,7 @@ class Model:
     ):
         """Create a Model."""
         self.ndim = len(self.labels)
-        self.priors: list[st.rv_continuous] = []
+        self.priors: list = []
         self.raw_data = data
 
         if preprocess is None:
@@ -144,15 +145,15 @@ class SumModel(Model):
         """Init an SumModel."""
         super().__init__(data, preprocess, transforms)
 
-        self.nyears = len(data) // 365
+        self.nR = len(data) // 365
 
         self.priors = [
             st.halfnorm(loc=0, scale=10),  # c0
             st.halfnorm(loc=0, scale=1),  # alpha
-        ] + [st.halfnorm(loc=0, scale=10) for _ in range(self.nyears)]
+        ] + [st.halfnorm(loc=0, scale=10) for _ in range(self.nR)]
 
         # Set the labels and ndims for this model, since they depend on the data
-        self.labels = self.labels + [f"R_{i}" for i in range(self.nyears)]
+        self.labels = self.labels + [f"R_{i}" for i in range(self.nR)]
         self.ndim = len(self.priors)
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
@@ -174,7 +175,7 @@ class SumModel(Model):
             (
                 st.norm.rvs(loc=10, scale=2, size=nwalkers),  # c0
                 st.norm.rvs(loc=10, scale=5, size=nwalkers),  # alpha
-                *(st.halfnorm.rvs(loc=0, scale=10, size=nwalkers) for _ in range(self.nyears)),
+                *(st.halfnorm.rvs(loc=0, scale=10, size=nwalkers) for _ in range(self.nR)),
             )
         ).T
 
@@ -214,9 +215,11 @@ class SumModel(Model):
         """
         (c0, alpha, *r) = theta
 
+        r_arr = np.repeat(np.cumsum(np.array(r)), self.nR * 365)[: len(self.transformed_data["c"])]
+
         t_contribution = alpha * self.transformed_data["t"].to_numpy()
         cone_contribution = self.transformed_data["c"].to_numpy()
-        c_mu = c0 + t_contribution - cone_contribution - np.cumsum(r)
+        c_mu = c0 + t_contribution - cone_contribution - r_arr
         return c_mu, t_contribution, cone_contribution
 
     def log_likelihood_vector(self, theta: tuple[float, ...]) -> tuple[np.ndarray, ...]:
