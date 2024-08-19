@@ -10,14 +10,28 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import rich.progress as rp
 import tarmac
-import tqdm
+from matplotlib.collections import LineCollection
 from rich.console import Console
 
 from ..preprocess import load_data
 from ..util import add_days_since_start, read_data
-from .model import Model, ThreeYearsPreceedingModel
-from .transform import StandardizeNormal
+from .model import (  # noqa: F401
+    ITKModel,
+    Model,
+    SumModel,
+    ThreeYearsPreceedingModel,
+    TYPKelvinModel,
+)
+from .transform import (  # noqa: F401
+    CumsumTransform,
+    KelvinCumsumTransform,
+    OneDayPerYearCumsumTransform,
+    StandardizeNormal,
+    ToKelvin,
+    ToKelvinBeforeStandardizeHalfNorm,
+)
 
 az.style.use("default")
 console = Console()
@@ -101,7 +115,7 @@ def get_data(
     return obs
 
 
-def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray]:
+def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray, np.ndarray]:
     """Calculate the log posterior.
 
     See https://python.arviz.org/en/stable/getting_started/ConversionGuideEmcee.html
@@ -122,53 +136,69 @@ def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray]:
     """
     lp = model.log_prior(theta)
     if not np.isfinite(lp):
-        return -np.inf, np.full((len(model.raw_data),), -np.inf)
+        return -np.inf, np.full((len(model.raw_data),), -np.inf), np.full(
+            (len(model.raw_data),), -np.inf
+        )
 
-    log_likelihood_vect = model.log_likelihood_vector(theta)
+    log_likelihood_vect, t_contrib, c_contrib = model.log_likelihood_vector(theta)
     log_likelihood = np.nansum(log_likelihood_vect)
 
-    return lp + log_likelihood, log_likelihood_vect
+    return lp + log_likelihood, t_contrib, c_contrib
 
 
-def run_sampler(model: Model, nwalkers: int = 32, nsamples: int = 20000):
+def run_sampler(
+    model: Model, nwalkers: int = 32, nsamples: int = 20000, save: bool = True
+) -> emcee.EnsembleSampler:
     """Run the sampler."""
-    sampler_path = f"{model.name}_sampler.h5"
+    if save:
+        sampler_path = f"{model.name}_sampler.h5"
 
-    if pathlib.Path(sampler_path).exists():
-        # Get the number of existing runs in the file
-        with h5py.File(sampler_path, "r") as file:
-            runs = list(file.keys())
+        if pathlib.Path(sampler_path).exists():
+            # Get the number of existing runs in the file
+            with h5py.File(sampler_path, "r") as file:
+                runs = list(file.keys())
 
-        backend = emcee.backends.HDFBackend(
-            f"{model.name}_sampler.h5",
-            name=f"mcmc_{len(runs)}",
-        )
-        old_backend = emcee.backends.HDFBackend(
-            f"{model.name}_sampler.h5",
-            name=f"mcmc_{len(runs) - 1}",
-        )
-        console.log(
-            f"Existing emcee sampler loaded from {model.name}_sampler.h5;"
-            f"Existing samples: {old_backend.iteration}"
-        )
+            backend = emcee.backends.HDFBackend(
+                f"{model.name}_sampler.h5",
+                name=f"mcmc_{len(runs)}",
+            )
+            old_backend = emcee.backends.HDFBackend(
+                f"{model.name}_sampler.h5",
+                name=f"mcmc_{len(runs) - 1}",
+            )
+            console.log(
+                f"Existing emcee sampler loaded from {model.name}_sampler.h5;"
+                f"Existing samples: {old_backend.iteration}"
+            )
+        else:
+            backend = emcee.backends.HDFBackend(
+                f"{model.name}_sampler.h5",
+                name="mcmc_0",
+            )
+            console.log(f"No emcee sampler found at {model.name}_sampler.h5; starting new sampler.")
+            backend.reset(nwalkers, model.ndim)
     else:
-        backend = emcee.backends.HDFBackend(
-            f"{model.name}_sampler.h5",
-            name="mcmc_0",
-        )
-        console.log(f"No emcee sampler found at {model.name}_sampler.h5; starting new sampler.")
-        backend.reset(nwalkers, model.ndim)
+        backend = None
 
     np.random.default_rng(42)
-    with Pool(processes=10) as pool:
-        sampler = emcee.EnsembleSampler(
-            nwalkers,
-            model.ndim,
-            log_prob_fn=functools.partial(log_probability, model=model),
-            pool=pool,
-            backend=backend,
-        )
-        sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    sampler = emcee.EnsembleSampler(
+        nwalkers,
+        model.ndim,
+        log_prob_fn=functools.partial(log_probability, model=model),
+        backend=backend,
+    )
+    sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    # with Pool(processes=10) as pool:
+    #     sampler = emcee.EnsembleSampler(
+    #         nwalkers,
+    #         model.ndim,
+    #         log_prob_fn=functools.partial(log_probability, model=model),
+    #         pool=pool,
+    #         backend=backend,
+    #     )
+    #     sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+
+    return sampler
 
 
 def load_az_idata(model: Model, chains: np.ndarray | str | None = None) -> az.InferenceData:
@@ -263,25 +293,27 @@ def sample_posterior_predictive(
 
     # Allocate float array because some values are np.nan (near edge of measured datapoints)
     posterior_predictive = np.zeros((n_predictions, n_steps), dtype=float)
-    for i in tqdm.trange(n_predictions, desc="Sampling the posterior predictive distribution..."):
+    for i in rp.track(
+        range(n_predictions), description="Sampling the posterior predictive distribution..."
+    ):
         posterior_predictive[i, :] = model.predictive(samples[i, :])
 
     # `model.predictive` returns _transformed_ predictions. Invert the transformed
     # predictions here rather than inside `model.predictive` for efficiency.
     posterior_predictive = model.transforms["c"].inverse(posterior_predictive)
 
-    np.save(f"posterior_predictive_{model.name}.npy", posterior_predictive)
+    np.save(f"posterior_predictive_samples_{model.name}.npy", posterior_predictive)
     return posterior_predictive
 
 
-def sample_prior_predictive(model: Model, n_predictions: int | None = None) -> np.ndarray:
+def sample_prior_predictive(model: Model, n_predictions: int = 10000) -> np.ndarray:
     """Sample from the prior predictive distribution.
 
     Parameters
     ----------
     model : Model
         Model for which prior predictive samples are to be generated
-    n_predictions : int | None
+    n_predictions : int
         Number of predictions to make
 
     Returns
@@ -292,19 +324,23 @@ def sample_prior_predictive(model: Model, n_predictions: int | None = None) -> n
     n_steps = len(model.raw_data)
 
     prior_samples = np.zeros((n_predictions, model.ndim), dtype=float)
-    for i in tqdm.trange(n_predictions, desc="Sampling the prior distribution..."):
+    for i in rp.track(range(n_predictions), description="Sampling the prior distribution..."):
         prior_samples[i, :] = model.sample_prior()
+
+    np.save(f"prior_samples_{model.name}.npy", prior_samples)
 
     # Allocate float array because some values are np.nan (near edge of measured datapoints)
     prior_predictive = np.zeros((n_predictions, n_steps), dtype=float)
-    for i in tqdm.trange(n_predictions, desc="Sampling the prior predictive distribution..."):
+    for i in rp.track(
+        range(n_predictions), description="Sampling the prior predictive distribution..."
+    ):
         prior_predictive[i, :] = model.predictive(prior_samples[i, :])
 
     # `model.predictive` returns _transformed_ predictions. Invert the transformed
     # predictions here rather than inside `model.predictive` for efficiency.
     prior_predictive = model.transforms["c"].inverse(prior_predictive)
 
-    np.save(f"prior_predictive_{model.name}.npy", prior_predictive)
+    np.save(f"prior_predictive_samples_{model.name}.npy", prior_predictive)
     return prior_predictive
 
 
@@ -312,7 +348,7 @@ def plot_chains(
     model: Model,
     chains: str | np.ndarray | None = None,
     fig: plt.Figure | None = None,
-    burn_in: int = 6000,
+    burn_in: int = 0,
 ) -> plt.Figure:
     """Plot the MCMC chains.
 
@@ -333,7 +369,7 @@ def plot_chains(
         The plot of the chains for each dimension
     """
     if chains is None:
-        samples = emcee.backends.HDFBackend(f"{model.name}_sampler.h5").get_chain()
+        samples = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0").get_chain()
     elif isinstance(chains, str):
         samples = emcee.backends.HDFBackend(chains).get_chain()
     else:
@@ -346,13 +382,13 @@ def plot_chains(
     return fig
 
 
-def plot_corner(
+def plot_posterior_corner(
     model: Model,
     chains: str | np.ndarray | None = None,
     fig: plt.Figure | None = None,
     burn_in: int = 6000,
 ) -> plt.Figure:
-    """Generate a corner plot.
+    """Generate a corner plot of posterior samples.
 
     Parameters
     ----------
@@ -371,7 +407,7 @@ def plot_corner(
         The corner plot
     """
     if chains is None:
-        samples = emcee.backends.HDFBackend(f"{model.name}_sampler.h5").get_chain()
+        samples = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0").get_chain()
     elif isinstance(chains, str):
         samples = emcee.backends.HDFBackend(chains).get_chain()
     else:
@@ -435,6 +471,7 @@ def plot_posterior_predictive_one_plot(
     model: Model,
     posterior_predictive: np.ndarray | str | None = None,
     fig: plt.Figure | None = None,
+    max_traces: int = 100,
 ) -> plt.Figure:
     """Plot the posterior predictive samples on one plot.
 
@@ -446,6 +483,8 @@ def plot_posterior_predictive_one_plot(
         Samples from the posterior predictive distribution
     fig : plt.Figure | None
         Figure in which the samples should be plotted
+    max_traces : int
+        Maximum number of traces to plot (it's easy to plot way too many)
 
     Returns
     -------
@@ -456,7 +495,7 @@ def plot_posterior_predictive_one_plot(
         fig = plt.figure()
 
     if posterior_predictive is None:
-        posterior_predictive = f"posterior_predictive_{model.name}.npy"
+        posterior_predictive = f"posterior_predictive_samples_{model.name}.npy"
 
     if isinstance(posterior_predictive, str):
         samples = np.load(posterior_predictive)
@@ -466,14 +505,19 @@ def plot_posterior_predictive_one_plot(
     npredictions, nsteps = samples.shape
 
     ax = fig.subplots(1, 1)
+    day = np.arange(samples.shape[1])
 
-    for i in range(npredictions):
-        if i == 0:
-            ax.plot(samples[i, :], "-k", label="predicted", alpha=0.3)
-        else:
-            ax.plot(samples[i, :], "-k", alpha=0.3)
+    lines = LineCollection(
+        [np.vstack((day, samples[i, :])).T for i in range(min(max_traces, samples.shape[0]))],
+        colors="k",
+        alpha=0.3,
+    )
+
+    ax.add_collection(lines)
+
     ax.plot(model.raw_data["c"], "-r", label="data")
-
+    ax.set_title("Posterior predictive distribution of cone count")
+    ax.legend()
     return fig
 
 
@@ -502,7 +546,7 @@ def plot_posterior_predictive_density(
         fig = plt.figure()
 
     if posterior_predictive is None:
-        posterior_predictive = f"posterior_predictive_{model.name}.npy"
+        posterior_predictive = f"posterior_predictive_samples_{model.name}.npy"
 
     if isinstance(posterior_predictive, str):
         samples = np.load(posterior_predictive)
@@ -518,7 +562,9 @@ def plot_posterior_predictive_density(
     c_range = np.array([np.nanmin(samples), bins])
 
     pdf = np.zeros((bins, nsteps), dtype=float)
-    for i in tqdm.trange(nsteps, desc="Histogramming the posterior predictive distribution."):
+    for i in rp.track(
+        range(nsteps), description="Histogramming the posterior predictive distribution."
+    ):
         values, _ = np.histogram(samples[:, i], bins=bins, range=c_range, density=True)
         pdf[:, i] = values
 
@@ -534,6 +580,134 @@ def plot_posterior_predictive_density(
     ax.set_title("Posterior predictive distribution of cone count")
     ax.plot(model.raw_data["c"], "-r", label="observed")
     ax.legend()
+    return fig
+
+
+def plot_prior_predictive_density(
+    model: Model,
+    prior_predictive: np.ndarray | str | None = None,
+    fig: plt.Figure | None = None,
+) -> plt.Figure:
+    """Plot the posterior predictive samples as a density.
+
+    Parameters
+    ----------
+    model : Model
+        Model for which posterior predictive samples were generated
+    prior_predictive : np.ndarray | str | None
+        Samples from the prior predictive distribution
+    fig : plt.Figure | None
+        Figure in which the samples should be plotted
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing a plot of posterior predictive samples
+    """
+    if fig is None:
+        fig = plt.figure()
+
+    if prior_predictive is None:
+        prior_predictive = f"prior_predictive_samples_{model.name}.npy"
+
+    if isinstance(prior_predictive, str):
+        samples = np.load(prior_predictive)
+    else:
+        samples = prior_predictive
+
+    _, nsteps = samples.shape
+
+    ax = fig.subplots(1, 1)
+
+    bins = 40
+    c_range = np.array([np.nanmin(samples), np.nanmax(samples)])
+
+    pdf = np.zeros((bins, nsteps), dtype=float)
+    for i in rp.track(
+        range(nsteps), description="Histogramming the prior predictive distribution."
+    ):
+        values, _ = np.histogram(samples[:, i], bins=bins, range=c_range, density=True)
+        pdf[:, i] = values
+
+    ax.imshow(
+        pdf,
+        extent=[0, nsteps, *c_range],
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        aspect="auto",
+    )
+
+    ax.set_title("Prior predictive distribution of cone count")
+    ax.plot(model.raw_data["c"], "-r", label="observed")
+    ax.legend()
+    return fig
+
+
+def plot_prior_predictive_one_plot(
+    model: Model,
+    samples: np.ndarray | None | str = None,
+    fig: plt.Figure | None = None,
+    max_traces: int = 100,
+) -> plt.Figure:
+    """Plot the prior predictive cone counts."""
+    if fig is None:
+        fig = plt.figure()
+
+    if samples is None:
+        samples = f"prior_predictive_samples_{model.name}.npy"
+
+    if isinstance(samples, str):
+        samples = np.load(samples)
+
+    ax = fig.subplots(1, 1)
+    day = np.arange(samples.shape[1])
+    lines = LineCollection(
+        [np.vstack((day, samples[i, :])).T for i in range(min(max_traces, samples.shape[0]))],
+        colors="k",
+        alpha=0.3,
+    )
+    ax.add_collection(lines)
+    ax.plot(model.raw_data["c"], "-r", label="observed")
+    ax.set_title("Prior predictive distribution of cone count")
+    ax.legend()
+    return fig
+
+
+def plot_prior_corner(
+    model: Model,
+    samples: np.ndarray | None | str = None,
+    fig: plt.Figure | None = None,
+) -> plt.Figure:
+    """Generate a corner plot of prior samples.
+
+    Parameters
+    ----------
+    model : Model
+        Model to plot
+    samples : np.ndarray | None | str
+        Prior samples; should be of shape (nsamples, ndim)
+    fig : plt.Figure | None
+        Figure in which to plot; if None, a new figure is generated
+
+    Returns
+    -------
+    plt.Figure
+        The corner plot
+    """
+    if samples is None:
+        samples = np.load(f"prior_samples_{model.name}.npy")
+    elif isinstance(samples, str):
+        samples = np.load(samples)
+
+    if fig is None:
+        fig = plt.figure()
+
+    # Insert an axis to make the samples of shape (nsamples, 1, ndim)
+    # to satisfy tarmac.corner_plot, which expects posterior samples with
+    # shape (nsamples, nwalkers, ndim)
+    samples = np.expand_dims(samples, 1)
+    tarmac.corner_plot(fig, samples[:, :, :], labels=model.labels, bins=40)
     return fig
 
 
@@ -558,22 +732,101 @@ def plot_figures(
     elif isinstance(chains, str):
         chains = emcee.backends.HDFBackend(chains).get_chain()
 
-    plot_chains(model, chains, burn_in=0)
-    plot_corner(model, chains, burn_in=burn_in)
+    plot_chains(model, chains)
+    plot_posterior_corner(model, chains, burn_in=burn_in)
 
-    posterior_predictive_fname = f"posterior_predictive_{model.name}.npy"
-    if pathlib.Path(posterior_predictive_fname).exists():
-        posterior_predictive = np.load(posterior_predictive_fname)
-        plot_posterior_predictive(model, posterior_predictive)
+
+def plot_data(model, burn_in: int = 1000, sampler=None):
+    if sampler is None:
+        sampler = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0")
+    elif isinstance(sampler, str):
+        sampler = emcee.backends.HDFBackend(sampler)
+
+    blobs = sampler.get_blobs()
+
+    bins = 40
+    nsteps = model.raw_data["c"].shape[0]
+
+    # Blobs shape: (nsamples, nwalkers, nblobs, nsteps)
+    t_contrib = blobs[burn_in:, :, 0, :]
+    c_contrib = blobs[burn_in:, :, 1, :]
+
+    c_range = np.array([model.transformed_data["c"].min(), model.transformed_data["c"].max()])
+
+    t_values = np.zeros((bins, nsteps), dtype=float)
+    c_values = np.zeros((bins, nsteps), dtype=float)
+    for i in rp.track(
+        range(nsteps), description="Histogramming the contributions of t and c terms to c_mu."
+    ):
+        t_vals, _ = np.histogram(
+            t_contrib[:, :, i].flatten(), bins=bins, range=c_range, density=True
+        )
+        c_vals, _ = np.histogram(
+            c_contrib[:, :, i].flatten(), bins=bins, range=c_range, density=True
+        )
+
+        t_values[:, i] = t_vals
+        c_values[:, i] = c_vals
+
+    fig, ax = plt.subplots(2, 1)
+
+    ax[0].imshow(
+        t_values,
+        extent=[0, nsteps, 0, bins],
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        aspect="auto",
+    )
+    ax[1].imshow(
+        c_values,
+        extent=[0, nsteps, 0, bins],
+        cmap="viridis",
+        interpolation="none",
+        origin="lower",
+        aspect="auto",
+    )
+
+    ax[0].set_title("Contributions of t term to c_mu")
+    ax[1].set_title("Contributions of c term to c_mu")
+
+    # ax.plot(model.raw_data["c"], "-r", label="observed")
+
+    # ax[0].plot(model.raw_data['t'], '.k', label='raw temperature')
+    # ax[0].plot(model.transformed_data["t"], ".r", label="transformed data")
+    # ax[0].plot(backward_integral(model.transformed_data["t"], 100), ".b", label="backward_integral")
+
+    # ax[0].plot(model.raw_data["c"], ".k", label="raw temperature")
+    # ax[0].plot(model.transformed_data["c"], ".r", label="transformed data")
+
+    # fig.legend()
+
+    return fig
 
 
 if __name__ == "__main__":
-    model = ThreeYearsPreceedingModel(
-        get_data(impute_time=True, site=1), transforms={"t": StandardizeNormal}
+    model = SumModel(
+        get_data(impute_time=True, site=1),
+        preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
+        transforms={},
     )
-    # run_sampler(model, nwalkers=32, nsamples=10000)
-    sample_posterior_predictive(model, n_predictions=100000, burn_in=2000)
-    # plot_figures(model, burn_in=2000)
+    sampler = run_sampler(model, nwalkers=64, nsamples=10000, save=False)
+
+    chains = sampler.get_chain()
+
+    plot_data(model, sampler=sampler)
+    plot_chains(model, chains)
+
+    # sample_posterior_predictive(model, n_predictions=10000, burn_in=1000)
+    # sample_prior_predictive(model, n_predictions=10000)
+
+    plot_posterior_corner(model, chains)
+    # plot_prior_corner(model)
+
     # plot_posterior_predictive_one_plot(model)
-    plot_posterior_predictive_density(model)
+    # plot_prior_predictive_one_plot(model, chains)
+
+    # plot_posterior_predictive_density(model)
+    # plot_prior_predictive_density(model)
+
     plt.show()

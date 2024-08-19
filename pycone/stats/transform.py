@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from . import math
+
 
 class Transform:
     """Class which transforms raw data."""
@@ -117,3 +119,137 @@ class StandardizeNormal(Transform):
         if np.isnan(self.mean):
             raise ValueError("Cannot invert a transform without applying a transform first.")
         return data * self.std + self.mean
+
+
+class ToKelvin(Transform):
+    """Transformation which converts temperature to Kelvin."""
+
+    def transform(self, data: pd.Series) -> pd.Series:
+        """Standardize the temperature data.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Temperature dataset
+
+        Returns
+        -------
+        pd.Series
+            Kelvin temperature; guaranteed to be positive
+        """
+        return math.fahrenheit_to_kelvin(data)
+
+    def inverse(self, data: pd.Series) -> pd.Series:
+        """Invert the half-normed data to recover data in original units.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Dataset to invert
+
+        Returns
+        -------
+        pd.Series
+            Fahrenheit dataset
+        """
+        return math.kelvin_to_fahrenheit(data)
+
+
+class ToKelvinBeforeStandardizeHalfNorm(Transform):
+    """Transformation which converts fahrenheit temperatures to kelvin before a half-norm transformation."""
+
+    def __init__(self):
+        """Init the ToKelvinBeforeStandardizeHalfNorm class."""
+        self.std = np.nan
+        self.min = np.nan
+
+    def transform(self, data: pd.Series) -> pd.Series:
+        """Standardize the temperature data.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Temperature dataset
+
+        Returns
+        -------
+        pd.Series
+            Standardized temperature; guaranteed to be positive
+        """
+        kelvin = math.fahrenheit_to_kelvin(data)
+
+        self.min = kelvin.min()
+        self.std = kelvin.std()
+        return (kelvin - self.min) / self.std
+
+    def inverse(self, data: pd.Series) -> pd.Series:
+        """Invert the half-normed data to recover data in original units.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Dataset to invert
+
+        Returns
+        -------
+        pd.Series
+            Unstandardized dataset (i.e. in fahrenheit)
+        """
+        kelvin = data * self.std + self.min
+        return math.kelvin_to_fahrenheit(kelvin)
+
+
+class B0A1Transform(Transform):
+    """Transformation which scales temperatures Between 0 And 1 (B0A1)."""
+
+    def __init__(self):
+        """Init the class."""
+        self.min = np.nan
+        self.max = np.nan
+
+    def transform(self, data: pd.Series) -> pd.Series:
+        """Standardize the temperature data.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Temperature dataset
+
+        Returns
+        -------
+        pd.Series
+            Transformed temperature; guaranteed to be positive
+        """
+        self.min = data.min()
+        self.std = data.std()
+        return (data - self.min) / (self.max - self.min)
+
+    def inverse(self, data: pd.Series) -> pd.Series:
+        """Invert the data to recover data in original units.
+
+        Parameters
+        ----------
+        data : pd.Series
+            Dataset to invert
+
+        Returns
+        -------
+        pd.Series
+            Unstandardized dataset (i.e. in fahrenheit)
+        """
+        return data * (self.max - self.min) + self.min
+
+
+class CumsumTransform(Transform):
+    def transform(self, data: pd.Series) -> pd.Series:
+        return data.cumsum()
+
+
+class OneDayPerYearCumsumTransform(Transform):
+    def transform(self, data: pd.Series) -> pd.Series:
+        return np.repeat(np.cumsum(data[::365]), 365)[: len(data)].reset_index(drop=True)
+
+
+class KelvinCumsumTransform(Transform):
+    def transform(self, data: pd.Series) -> pd.Series:
+        return math.fahrenheit_to_kelvin(data).cumsum()
