@@ -1,6 +1,79 @@
 #set math.equation(numbering: "(1)")
 
-= Update 2024-07-10
+= Background
+
+Traditionally cone crop prediction modeling has focused on calculating correlations
+between various predictors and the cone count observed for a stand of trees. Usually,
+predictor variables are functions of the average temperature in the years preceeding the
+observed cone crop during the growing season, since that is when the various biological
+processes involved in reproduction occur.
+
+Kelly et al explored several such predictor variables and compared their correlations
+across a broad dataset involving multiple plant families and over a long period of time.
+The predictor variables considered were:
+
+- $"T1"$ model: the mean summer temperature in the previous year ($T_(n-1)$).
+- $"T2"$ model: the mean summer temperature 2 years previously ($T_(n-2)$).
+- $Delta"T"$ model: the change in mean summer temperature over the two preceding years ($T_(n-1)–T_(n-2)$).
+- $"2T"$ model: both mean summer temperature in the previous year ($T_(n-1)$) and mean summer temperature 2 years previously ($T_(n-2)$).
+
+Correlations were calculated using linear fits between the predictor variable and $log$
+of the annual seedfall $c$. Kelly et al compared the p-values calculated with the null
+hypothesis being that no correlation exists, and found that for most plant families the
+$Delta T$ model produced the lowest p-values, and concluded that $Delta T$ is an ideal
+cue for seed crop prediction.
+
+= Motivation
+
+There are a number of reasons to suspect both alternative models and alternative
+mathematical approaches would be better motivated than the proposed approach of Kelly et
+al.
+
++ *p-values*: Although the p-values calculated are small, any analysis in which many
+  p-values are calculated is bound to have statistically signficant p-values
+  _somewhere_. No effort to control for the look-elsewhere effect was made. Furthermore
+  the null hypothesis - that the models analyzed by Kelly have 0 correlation with seed
+  crop - doesn't capture what is already known about plant reproduction; common sense
+  tells us that temperatues _must_ have an effect on reproductive processes because
+  plants can't reproduce in temperatures inhospitable to life. It therefore shouldn't be
+  surprising that there's a correlation between a predictor involving temperature and
+  the seed crop.
++ *Linearity*: There's no reason _a priori_ to think that the relationship between any
+  of the predictors put forth by Kelly et al should be linear with $log(c)$, except that
+  any continuous and differential function can be approximated to first order as a line
+  (Taylor series). No discussion of this choice is made, even though it may be true,
+  although the implications of this implicit assumption mean that the calculations
+  become easier.
++ *Homoskedasticity and normality*: In the supplemental material, Kelly et al argue that empirically
+  the measured seedfall appears to be homoskedastic, i.e. that the variance doesn't
+  change with the number of seeds observed. This is part of a larger implied (but not
+  discussed) argument that the observed log-seedfall $log(c)$ is a normally distributed
+  random variable with a fixed variance $sigma^2$ and a mean $Delta T$. In short,
+  homoskedasticity is used as an argument that $log(c) tilde cal(N)(Delta T, sigma)$.
+
+  I suspect that seed production is _not_ a homoskedastic process; plants that have more
+  resources available for seed production should have a greater _variation_ in seed
+  production. Furthermore the assumption of normality is not justified; the fact that
+  the normal distribution has a nonzero probability on the domain $(-infinity,
+  infinity)$, while $log(c)$ is only defined (for real values) on the interval $(0,
+  infinity)$.
+
++ *$Delta T$ as a model*: Intuition tells us that plants that experience freezing
+  conditions for multiple years will not reproduce as much as the same plants that
+  experience ideal growing conditions for multiple years because they simply do not have
+  the same resources available for reproduction. However, two subsequent years of ideal
+  reproductive temperatures may have the same small value of $Delta T$ as two subsequent
+  years of terrible reproductive temperatures. Kelly et al discuss this as an
+  interesting consequence of this model - that as a general rule plant reproduction will be
+  insensitive to changes in global temperatures, as $Delta T$ will remain unaffected by
+  average changes in temperature.
+
++ *Data Manipulation*:
+
+== Mathematics
+
+
+
 
 = Likelihood
 
