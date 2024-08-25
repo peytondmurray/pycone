@@ -1,12 +1,14 @@
 #set math.equation(numbering: "(1)")
+#set par(justify: true)
+#show link: underline
 
 = Background
 
 Traditionally cone crop prediction modeling has focused on calculating correlations
-between various predictors and the cone count observed for a stand of trees. Usually,
-predictor variables are functions of the average temperature in the years preceeding the
-observed cone crop during the growing season, since that is when the various biological
-processes involved in reproduction occur.
+between various predictors and the annual cone count observed for a stand of trees.
+Usually, predictor variables are functions of the average temperature in the years
+preceeding the observed cone crop during the growing season, since that is when the
+various biological processes involved in reproduction occur.
 
 Kelly et al explored several such predictor variables and compared their correlations
 across a broad dataset involving multiple plant families and over a long period of time.
@@ -14,8 +16,10 @@ The predictor variables considered were:
 
 - $"T1"$ model: the mean summer temperature in the previous year ($T_(n-1)$).
 - $"T2"$ model: the mean summer temperature 2 years previously ($T_(n-2)$).
-- $Delta"T"$ model: the change in mean summer temperature over the two preceding years ($T_(n-1)–T_(n-2)$).
-- $"2T"$ model: both mean summer temperature in the previous year ($T_(n-1)$) and mean summer temperature 2 years previously ($T_(n-2)$).
+- $Delta"T"$ model: the change in mean summer temperature over the two preceding years
+  ($T_(n-1)–T_(n-2)$).
+- $"2T"$ model: both mean summer temperature in the previous year ($T_(n-1)$) and mean
+  summer temperature 2 years previously ($T_(n-2)$).
 
 Correlations were calculated using linear fits between the predictor variable and $log$
 of the annual seedfall $c$. Kelly et al compared the p-values calculated with the null
@@ -24,6 +28,9 @@ $Delta T$ model produced the lowest p-values, and concluded that $Delta T$ is an
 cue for seed crop prediction.
 
 = Motivation
+
+
+== Disadvantages of correlations
 
 There are a number of reasons to suspect both alternative models and alternative
 mathematical approaches would be better motivated than the proposed approach of Kelly et
@@ -34,29 +41,44 @@ al.
   _somewhere_. No effort to control for the look-elsewhere effect was made. Furthermore
   the null hypothesis - that the models analyzed by Kelly have 0 correlation with seed
   crop - doesn't capture what is already known about plant reproduction; common sense
-  tells us that temperatues _must_ have an effect on reproductive processes because
+  tells us that temperatures _must_ have an effect on reproductive processes because
   plants can't reproduce in temperatures inhospitable to life. It therefore shouldn't be
   surprising that there's a correlation between a predictor involving temperature and
   the seed crop.
+
 + *Linearity*: There's no reason _a priori_ to think that the relationship between any
   of the predictors put forth by Kelly et al should be linear with $log(c)$, except that
   any continuous and differential function can be approximated to first order as a line
-  (Taylor series). No discussion of this choice is made, even though it may be true,
-  although the implications of this implicit assumption mean that the calculations
-  become easier.
-+ *Homoskedasticity and normality*: In the supplemental material, Kelly et al argue that empirically
-  the measured seedfall appears to be homoskedastic, i.e. that the variance doesn't
-  change with the number of seeds observed. This is part of a larger implied (but not
-  discussed) argument that the observed log-seedfall $log(c)$ is a normally distributed
-  random variable with a fixed variance $sigma^2$ and a mean $Delta T$. In short,
+  (Taylor series). No discussion of this choice is made, even though it may be valid,
+  although the implications of this assumption mean that the calculations become easier.
+
++ *Homoskedasticity and normality*: In the supplemental material, Kelly et al argue that
+  empirically the measured seedfall appears to be homoskedastic, i.e. that the variance
+  doesn't change with the number of seeds observed. This is part of a larger implied
+  argument that the observed log-seedfall $log(c)$ is a normally distributed random
+  variable with a fixed variance $sigma^2$ and a mean $Delta T$. In short,
   homoskedasticity is used as an argument that $log(c) tilde cal(N)(Delta T, sigma)$.
 
-  I suspect that seed production is _not_ a homoskedastic process; plants that have more
-  resources available for seed production should have a greater _variation_ in seed
-  production. Furthermore the assumption of normality is not justified; the fact that
-  the normal distribution has a nonzero probability on the domain $(-infinity,
-  infinity)$, while $log(c)$ is only defined (for real values) on the interval $(0,
-  infinity)$.
+  But is seed production really a homoskedastic process? Naively plants that
+  have more resources available for seed production should have a greater _variation_ in
+  seed production. Furthermore the assumption of normality is not justified by the fact that
+  the normal distribution has a nonzero probability on the domain $(-infinity, infinity)$,
+  while $log(c)$ is only defined (for real values) on the interval $(0, infinity)$, meaning
+  that _any_ normally-distributed predictor can't possibly explain the range of seed
+  crops observed in nature. Most importantly, log-transforming the seedfall is certainly
+  unjustified for the simple fact that this approach cannot be used to correlate with
+  years in which 0 seeds are observed ($log(0) = -infinity$). These data points are arguably
+  the _most_ important observations in species that exhibit masting because in non-mast
+  years, few to no seeds are often observed.
+
++ *Data Preprocessing*: As a result of the log-transformation that is carried out on the
+  observed seedfall, years in which no seeds are observed cannot be used in the
+  correlation without utterly dominating the linear fit used to produce the correlation.
+  Kelly et al directly modify these observations before the log transformation,
+  replacing them with values that are half the smallest nonzero value. Similar
+  procedures are carried out elsewhere in the literature, but in all cases this approach
+  is mathematically unjustified; any valid model of cone production must be able to
+  predict 0-seedfall years.
 
 + *$Delta T$ as a model*: Intuition tells us that plants that experience freezing
   conditions for multiple years will not reproduce as much as the same plants that
@@ -65,54 +87,111 @@ al.
   reproductive temperatures may have the same small value of $Delta T$ as two subsequent
   years of terrible reproductive temperatures. Kelly et al discuss this as an
   interesting consequence of this model - that as a general rule plant reproduction will be
-  insensitive to changes in global temperatures, as $Delta T$ will remain unaffected by
+  insensitive to changes in global temperatures because $Delta T$ is unaffected by
   average changes in temperature.
 
-+ *Data Manipulation*:
+#pagebreak()
 
-== Mathematics
+== The Bayesian Approach
+
+Instead of carrying out linear correlations, let's focus on a different approach.
+Besides the reasons I've previously discussed for trying something different than Kelly
+et al, there are also other reasons why one might want to take a Bayesian approach.
+#link("https://jakevdp.github.io/blog/2014/03/11/frequentism-and-bayesianism-a-practical-intro/")[Here's
+a good discussion about this if you want to learn more.]
+
+Here's the general idea:
+
++ We start by writing down a probability distribution which describes the probability of
+  observing an individual data point $c_i$ given some model. I propose that the
+  probability is given by a Poisson distribution:
+
+  $
+  P(c_i | c_(mu, i)) = frac(c_(mu, i)^(c_i) e^(-c_(mu, i)), c_i !)
+  $
+
+  where $c_i$ is the number of cones observed for the stand on day $i$, and $c_(mu, i)$ is
+  the Poisson rate parameter - the expected number of cones on day $i$.
+
+  The Poisson distribution is a _counting distribution_, a distribution that gives the
+  probability of a number of events happening in a given amount of time. It has some nice
+  properties: it's discrete (i.e. it is only defined for integer cone counts) and is
+  defined on the domain $[0, infinity)$, as is required by our data.
+
++ From the probability of observing an individual day's cone crop $c_i$, we can write
+  down the probability of observing the cone crop for all $N$ days (the entire dataset)
+  by taking the product of all the individual probabilities:
+
+  $
+  P({c_i} | {c_(mu, i)}) = product_(i=0)^N frac(c_(mu, i)^(c_i) e^(-c_(mu, i)), c_i !)
+  $
+
+  This is the _likelihood_; in the literature it is usually written as
+
+  $
+  cal(L)(D | theta)
+  $
+
+  where for us the data $D = {c_i}$ and the model $theta = {c_(mu, i)}$.
+
++ From here, we can write down an expression for the _posterior_ probability
+  distribution $cal(P)$, which is a distribution over our model parameters conditioned on
+  our data. We make use of Bayes's theorem, and up to a normalization constant
+
+  $
+  cal(P)(theta | D) prop cal(L)(D | theta)P(theta)
+  $
+
+  where $P(theta)$ is a prior distribution; this distribution characterizes the
+  epistemic uncertainty in our model _prior_ to observing any data.
+
+In the Bayesian approach, getting the posterior probability distribution is the entire
+goal. We could spend a long time talking about how this differs from frequentist
+approaches which usually focus on metrics related to the likelihood (for example,
+least-squares fitting is equivalent to maximum likelihood estimation with the implicit
+and extremely restrictive assumption that there is no uncertainty in the independent
+variable, and normally distributed uncertainty in the observed dependent variable), but
+for brevity I'm going to just move past this. Once again Jake van der Plas
+#link("https://jakevdp.github.io/blog/2014/03/11/frequentism-and-bayesianism-a-practical-intro/")[has
+a good discussion of this] and
+#link("https://www.youtube.com/watch?v=911d4A1U0BE")[Chris Fonnesbeck also has a talk
+with more information.]
+
+As you'll see with models discussed below, usually the posterior can only be written
+down in a nice closed form for certain special cases where the likelihood and priors are
+_conjugate_. In that case you can actually calculate the posterior by hand, but in most
+cases you really need to turn to computers to sample from the posterior distribution
+numerically, and that's what we'll do here.
+
+== Modeling
+
+This part focuses on coming up with reasonable values of the rate parameter $c_(mu, i)$.
+A few months ago when I started looking at this, we talked a lot about
 
 
+=== Three years preceeding model
 
-
-= Likelihood
-
-The number of cones $c_i$ produced by a stand measured on a given day $i$ is Poisson distributed:
+This model assumes that the energy available to produce cones are mostly gathered from
+average temperatures in specific windows in the three years preceeding the cone crop,
+with effectively no contribution from years before that. As a proxy for
+Photosynthetically Active Radiation (PAR) we instead use temperature (since that's the
+data we have), and make the assumption that the two are proportional. Under that
+assumption we can write down the expected number of cones:
 
 $
-P(c_i | overline(c)) = frac(overline(c)^(c_i) e^(-overline(c)), c_i !)
+c_(mu, i) = c_0 + alpha_0 angle.l T angle.r_(i - l_0, w_0) + alpha_1 angle.l T angle.r_(i - l_1, w_1) + alpha_2 angle.l T angle.r_(i - l_2, w_2) - c_(i - l_3)
 $
-
-The number of number of cones $overline(c)$ that we expect to see is given by the energy-conserving
-equation that we've discussed before,
-
-$
-overline(c)_i = c_0 + alpha angle.l T angle.r_(i - l_0, w_0) + beta angle.l T angle.r_(i - l_1, w_1) - c_(i - l_2)
-$ <average>
 
 where e.g. $angle.l T angle.r_(i - l_k, w_j)$ denotes the moving average of the temperature $T$ over
-a window of size $2w_j + 1$ days surrounding the day $i - l_k$. Here, $alpha$ and $beta$ are fit
+a window of size $2w_j + 1$ days surrounding the day $i - l_k$. Here, the $alpha_k$ are fit
 parameters which determine the relative importance of each year's sunlight contribution to the
 stand's energy reserves. $c_0$ is the initial energy reserves of the stand at the beginning of our
-observations.
-
-The likelihood of observing the data ${T_i, c_i}$ from our dataset is just the product of the
-probabilities of each observation:
-
-$
-P({c_i, T_i} | overline(c)_i) = product_i (overline(c)_i^c e^(-overline(c)_i))/c!
-$ <likelihood>
-
-where $overline(c)_i$ is the expected number of cones on day $i$, given by @average. This is the
-#text(weight: "bold")[likelihood] distribution; it is the probability of observing our data given
-our model.
-
-#pagebreak()
+observations. $c_(i-l_3)$ is the lagged cone count from $l_3$ days in the past.
 
 = Priors
 
 I chose some prior probability distributions based on what I know about cone production. These
-characterize the epistemic uncertainty about our system:
+characterize the epistemic uncertainty about our model parameters:
 
 #figure(
     table(
@@ -122,27 +201,24 @@ characterize the epistemic uncertainty about our system:
         ),
 
         $c_0$, $"Uniform"(0, 1000)$, "# of cones", "Initial energy reserves (number of cones) at start of dataset; can be between 0-1000 cones",
-        $alpha$, $"HalfNorm"(10)$, "cones/°F", "Weakly informative choice of half-normal distribution, since this is probably a small number",
-        $beta$, $"HalfNorm"(10)$, "cones/°F", "Weakly informative choice of half-normal distribution, since this is probably a small number",
+        $alpha_0$, $"HalfNorm"(10)$, "cones/°K", "Weakly informative choice of half-normal distribution. This is probably a small number",
+        $alpha_1$, $"HalfNorm"(10)$, "cones/°K", "Weakly informative choice of half-normal distribution. This is probably a small number",
+        $alpha_2$, $"HalfNorm"(10)$, "cones/°K", "Weakly informative choice of half-normal distribution. This is probably a small number",
         $w_0$, $"Uniform"(1, 100)$, "days", "Window size used to calculate the average temperature in the first year. Probably in the range of 1-100 days long",
         $w_1$, $"Uniform"(1, 100)$, "days", "Window size used to calculate the average temperature in the second year. Probably in the range of 1-100 days long",
+        $w_2$, $"Uniform"(1, 100)$, "days", "Window size used to calculate the average temperature in the second year. Probably in the range of 1-100 days long",
         $l_0$, $"Uniform"(180, 545)$, "days", "Lag time of the moving average of the temperature in the first year; constrained to be 0.5 to 1.5 years before the measured crop",
         $l_1$, $"Uniform"(550, 910)$, "days", "Lag time of the moving average of the temperature in the second year; constrained to be 1.5 to 2.5 years before the measured crop",
         $l_2$, $"Uniform"(915, 1275)$, "days", "Lag time used to get the last cone crop, constrained to be 2.5 to 3.5 years before the measured crop",
+        $l_3$, $"Uniform"(915, 1275)$, "days", "Lag time used to get the last cone crop, constrained to be 2.5 to 3.5 years before the measured crop",
     ),
-)<priors>
+)
 
 = Posterior
 
-Using the likelihood (@likelihood) and the priors (@priors), we can construct the #text(weight:
-"bold")[posterior] distribution using Bayes' theorem:
-
-$
-P(overline(c)_i | {c_i, T_i}) prop P(overline(c)_i) P({c_i, T_i} | overline(c)_i)
-$ <posterior>
-
-Using MCMC, we can sample from this distribution to get an idea of what it looks like.
-#pagebreak()
+Using the likelihood  and the priors, we can construct the posterior using Bayes's
+theorem above. We then use computational methods draw samples from this distribution so
+that we can get an idea of what it looks like. To do this we use MCMC.
 
 = MCMC
 
