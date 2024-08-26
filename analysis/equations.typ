@@ -62,7 +62,7 @@ al.
   But is seed production really a homoskedastic process? Naively plants that
   have more resources available for seed production should have a greater _variation_ in
   seed production. Furthermore the assumption of normality is not justified by the fact that
-  the normal distribution has a nonzero probability on the domain $(-infinity, infinity)$,
+  the normal distribution has a nonzero probability on the support $(-infinity, infinity)$,
   while $log(c)$ is only defined (for real values) on the interval $(0, infinity)$, meaning
   that _any_ normally-distributed predictor can't possibly explain the range of seed
   crops observed in nature. Most importantly, log-transforming the seedfall is certainly
@@ -116,7 +116,7 @@ Here's the general idea:
   The Poisson distribution is a _counting distribution_, a distribution that gives the
   probability of a number of events happening in a given amount of time. It has some nice
   properties: it's discrete (i.e. it is only defined for integer cone counts) and is
-  defined on the domain $[0, infinity)$, as is required by our data.
+  defined on the support $[0, infinity)$, as is required by our data.
 
 + From the probability of observing an individual day's cone crop $c_i$, we can write
   down the probability of observing the cone crop for all $N$ days (the entire dataset)
@@ -147,15 +147,14 @@ Here's the general idea:
 
 In the Bayesian approach, getting the posterior probability distribution is the entire
 goal. We could spend a long time talking about how this differs from frequentist
-approaches which usually focus on metrics related to the likelihood (for example,
-least-squares fitting is equivalent to maximum likelihood estimation with the implicit
-and extremely restrictive assumption that there is no uncertainty in the independent
+approaches which usually focus on metrics related to the likelihood (for example, least
+squares fitting is equivalent to maximum likelihood estimation with the implicit and
+extremely restrictive assumption that there is no uncertainty in the independent
 variable, and normally distributed uncertainty in the observed dependent variable), but
-for brevity I'm going to just move past this. Once again Jake van der Plas
-#link("https://jakevdp.github.io/blog/2014/03/11/frequentism-and-bayesianism-a-practical-intro/")[has
-a good discussion of this] and
-#link("https://www.youtube.com/watch?v=911d4A1U0BE")[Chris Fonnesbeck also has a talk
-with more information.]
+for now I'm going to just point to
+#link("https://jakevdp.github.io/blog/2014/03/11/frequentism-and-bayesianism-a-practical-intro/")[Jake
+VanderPlas's blog] and #link("https://www.youtube.com/watch?v=911d4A1U0BE")[this talk
+by Chris Fonnesbeck.]
 
 As you'll see with models discussed below, usually the posterior can only be written
 down in a nice closed form for certain special cases where the likelihood and priors are
@@ -165,33 +164,35 @@ numerically, and that's what we'll do here.
 
 == Modeling
 
-This part focuses on coming up with reasonable values of the rate parameter $c_(mu, i)$.
-A few months ago when I started looking at this, we talked a lot about
-
+This part focuses on coming up with reasonable expressions of the rate parameter $c_(mu,
+i)$. Fundamentally I think that the expected number of cones should be determined
+entirely by what resources are available to produce them.
 
 === Three years preceeding model
 
-This model assumes that the energy available to produce cones are mostly gathered from
+This model assumes that the energy available to produce cones is mostly gathered from
 average temperatures in specific windows in the three years preceeding the cone crop,
-with effectively no contribution from years before that. As a proxy for
-Photosynthetically Active Radiation (PAR) we instead use temperature (since that's the
-data we have), and make the assumption that the two are proportional. Under that
-assumption we can write down the expected number of cones:
+with no contribution from years before that. As a proxy for Photosynthetically Active
+Radiation (PAR) we instead use temperature (since that's the data we have), and make the
+assumption that the two are proportional. Under that assumption we can write down the
+expected number of cones:
 
 $
 c_(mu, i) = c_0 + alpha_0 angle.l T angle.r_(i - l_0, w_0) + alpha_1 angle.l T angle.r_(i - l_1, w_1) + alpha_2 angle.l T angle.r_(i - l_2, w_2) - c_(i - l_3)
 $
 
-where e.g. $angle.l T angle.r_(i - l_k, w_j)$ denotes the moving average of the temperature $T$ over
-a window of size $2w_j + 1$ days surrounding the day $i - l_k$. Here, the $alpha_k$ are fit
-parameters which determine the relative importance of each year's sunlight contribution to the
-stand's energy reserves. $c_0$ is the initial energy reserves of the stand at the beginning of our
-observations. $c_(i-l_3)$ is the lagged cone count from $l_3$ days in the past.
+where $angle.l T angle.r_(i - l_k, w_k)$ denotes the moving average of the
+temperature $T$ over a window of size $2w_k + 1$ days surrounding the day $i - l_k$.
+Here, the $alpha_k$ are fit parameters which determine the relative importance of each
+year's sunlight contribution to the stand's energy reserves. $c_0$ is the initial energy
+reserves of the stand at the beginning of our observations, $c_(i-l_3)$ is the lagged
+cone count from $l_3$ days in the past.
 
-= Priors
+==== Priors
 
-I chose some prior probability distributions based on what I know about cone production. These
-characterize the epistemic uncertainty about our model parameters:
+I chose some prior probability distributions based on what I know about cone production.
+These characterize the epistemic uncertainty about our model parameters prior to
+observing any data:
 
 #figure(
     table(
@@ -200,25 +201,52 @@ characterize the epistemic uncertainty about our model parameters:
             [*Parameter*], [*Prior*], [*Unit of measure*], [*Comment*]
         ),
 
-        $c_0$, $"Uniform"(0, 1000)$, "# of cones", "Initial energy reserves (number of cones) at start of dataset; can be between 0-1000 cones",
+        $c_0$, $"HalfNorm"(10)$, "# of cones", "Initial energy reserves at start of dataset",
         $alpha_0$, $"HalfNorm"(10)$, "cones/°K", "Weakly informative choice of half-normal distribution. This is probably a small number",
         $alpha_1$, $"HalfNorm"(10)$, "cones/°K", "Weakly informative choice of half-normal distribution. This is probably a small number",
         $alpha_2$, $"HalfNorm"(10)$, "cones/°K", "Weakly informative choice of half-normal distribution. This is probably a small number",
         $w_0$, $"Uniform"(1, 100)$, "days", "Window size used to calculate the average temperature in the first year. Probably in the range of 1-100 days long",
         $w_1$, $"Uniform"(1, 100)$, "days", "Window size used to calculate the average temperature in the second year. Probably in the range of 1-100 days long",
         $w_2$, $"Uniform"(1, 100)$, "days", "Window size used to calculate the average temperature in the second year. Probably in the range of 1-100 days long",
-        $l_0$, $"Uniform"(180, 545)$, "days", "Lag time of the moving average of the temperature in the first year; constrained to be 0.5 to 1.5 years before the measured crop",
-        $l_1$, $"Uniform"(550, 910)$, "days", "Lag time of the moving average of the temperature in the second year; constrained to be 1.5 to 2.5 years before the measured crop",
-        $l_2$, $"Uniform"(915, 1275)$, "days", "Lag time used to get the last cone crop, constrained to be 2.5 to 3.5 years before the measured crop",
-        $l_3$, $"Uniform"(915, 1275)$, "days", "Lag time used to get the last cone crop, constrained to be 2.5 to 3.5 years before the measured crop",
+        $l_0$, $"Uniform"(185, 545)$, "days", "Lag time of the moving average of the temperature in the first year; constrained to be 0.5 to 1.5 years before the measured crop",
+        $l_1$, $"Uniform"(545, 910)$, "days", "Lag time of the moving average of the temperature in the second year; constrained to be 1.5 to 2.5 years before the measured crop",
+        $l_2$, $"Uniform"(910, 1275)$, "days", "Lag time of the moving average of the temperature in the second year; constrained to be 2.5 to 3.5 years before the measured crop",
+        $l_3$, $"Uniform"(910, 1275)$, "days", "Lag time used to get the last cone crop, constrained to be 2.5 to 3.5 years before the measured crop",
     ),
 )
 
-= Posterior
+==== Posterior
 
-Using the likelihood  and the priors, we can construct the posterior using Bayes's
-theorem above. We then use computational methods draw samples from this distribution so
-that we can get an idea of what it looks like. To do this we use MCMC.
+I used Markov Chain Monte Carlo to sample from the posterior distribution using a
+software package called #link("https://emcee.readthedocs.io/en/stable/")[`emcee`]. You
+can think of this like a black box which proposes values of the model parameters $theta
+= (c_0, alpha_0, alpha_1, alpha_2, w_0, w_1, w_2, l_0, l_1, l_2, l_3)$; I wrote code
+that takes those proposed values and uses them to compute the prior and likelihood,
+which are then multiplied to get a posterior probability, which I then pass back to the
+black box. The `emcee` sampler then uses this posterior probability to generate new
+proposed values of $theta$, and the process repeats many times. After an initial burn-in
+period, if the probabilities are defined correctly and the sampler is able to
+efficiently explore the parameter space, the sampler will eventually converge to certain
+values of $theta$, and #link("https://msp.org/camcos/2010/5-1/p04.xhtml")[due to some
+clever underlying math] we can guarantee that the samples being generated will
+#link("https://en.wikipedia.org/wiki/Markov_chain_Monte_Carlo")[match the posterior
+distribution.]
+
+
+#figure(
+  image("mcmc_diagram.svg"),
+  caption: [
+    The MCMC sampler takes in an initial $theta$, and proposes new values of $theta$. For
+    each proposal, we calculate the posterior probability of the proposed value, and pass
+    it back to the sampler; it uses this value to generate new proposed values of
+    $theta$. After some point, the new proposed values will converge to posterior
+    probability distribution.
+  ]
+)
+
+
+
+#pagebreak()
 
 = MCMC
 
@@ -340,3 +368,10 @@ $
 
 Monte Carlo samplers are sensitive the data fed into them; generally they sample efficiently when
 data is distributed $tilde N(0, 1)$.
+
+
+= Symbols
+
+$
+theta = vec(c_0, alpha_0, alpha_1, alpha_2, w_0, w_1, w_2, l_0, l_1, l_2, l_3)
+$

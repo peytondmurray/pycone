@@ -3,6 +3,7 @@ import pathlib
 import sys
 import warnings
 from multiprocessing import Pool
+from typing import cast
 
 import arviz as az
 import emcee
@@ -181,22 +182,22 @@ def run_sampler(
         backend = None
 
     np.random.default_rng(42)
-    sampler = emcee.EnsembleSampler(
-        nwalkers,
-        model.ndim,
-        log_prob_fn=functools.partial(log_probability, model=model),
-        backend=backend,
-    )
-    sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
-    # with Pool(processes=10) as pool:
-    #     sampler = emcee.EnsembleSampler(
-    #         nwalkers,
-    #         model.ndim,
-    #         log_prob_fn=functools.partial(log_probability, model=model),
-    #         pool=pool,
-    #         backend=backend,
-    #     )
-    #     sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    # sampler = emcee.EnsembleSampler(
+    #     nwalkers,
+    #     model.ndim,
+    #     log_prob_fn=functools.partial(log_probability, model=model),
+    #     backend=backend,
+    # )
+    # sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    with Pool(processes=10) as pool:
+        sampler = emcee.EnsembleSampler(
+            nwalkers,
+            model.ndim,
+            log_prob_fn=functools.partial(log_probability, model=model),
+            pool=pool,
+            backend=backend,
+        )
+        sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
 
     return sampler
 
@@ -736,12 +737,34 @@ def plot_figures(
     plot_posterior_corner(model, chains, burn_in=burn_in)
 
 
-def plot_data(model, burn_in: int = 1000, sampler=None):
+def plot_data(
+    model: Model,
+    burn_in: int = 1000,
+    sampler: str | emcee.backends.HDFBackend | None = None,
+) -> plt.Figure:
+    """Plot the raw data and blobs.
+
+    Parameters
+    ----------
+    model : Model
+        Model for which the data is to be plotted
+    burn_in : int
+        Samples to ignore at the beginning of the chains
+    sampler : str | emcee.backends.HDFBackend | None
+        Sampler hdf5 file to use or to load. If unspecified,
+        {model.name}_sampler.h5 will be loaded
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing the plotted data
+    """
     if sampler is None:
         sampler = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0")
     elif isinstance(sampler, str):
         sampler = emcee.backends.HDFBackend(sampler)
 
+    sampler = cast(emcee.backends.HDFBackend, sampler)
     blobs = sampler.get_blobs()
 
     bins = 40
@@ -805,11 +828,16 @@ def plot_data(model, burn_in: int = 1000, sampler=None):
 
 
 if __name__ == "__main__":
-    model = SumModel(
+    model = ThreeYearsPreceedingModel(
         get_data(impute_time=True, site=1),
-        preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
+        preprocess={"t": ToKelvin},
         transforms={},
     )
+    # model = SumModel(
+    #     get_data(impute_time=True, site=1),
+    #     preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
+    #     transforms={},
+    # )
     sampler = run_sampler(model, nwalkers=64, nsamples=10000, save=False)
 
     chains = sampler.get_chain()
