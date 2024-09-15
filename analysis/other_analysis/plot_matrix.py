@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 
@@ -63,10 +64,44 @@ def get_data() -> dict[pd.DataFrame]:
     return dfs
 
 
+def plot_heatmap(dfs: dict[str, pd.DataFrame], key: str):
+    df = dfs[key]
+
+    fig, ax = plt.subplots(1, 1)
+    cmap = plt.cm.Blues
+    cmap.set_bad("gray", 0.2)
+    im = ax.imshow(
+        df.to_numpy(),
+        origin="upper",
+        aspect="equal",
+        cmap=cmap,
+    )
+
+    correlation = df.to_numpy()
+
+    for i, j in zip(*np.nonzero(~np.isnan(correlation)), strict=True):
+        ax.text(
+            j,
+            i,
+            f"{correlation[i, j]:0.2f}",
+            ha="center",
+            va="center",
+            color="w",
+        )
+
+    fig.colorbar(im, ax=ax, label="Correlation", pad=0.02)
+
+    ax.set_xlabel("Record ID")
+    ax.set_ylabel("Record ID")
+    ax.set_xticks(np.arange(len(df.columns)), df.columns)
+    ax.set_yticks(np.arange(len(df.index)), df.index)
+    ax.set_title(key.upper())
+
+
 def main():
     dfs = get_data()
-    breakpoint()
-    print(dfs)
+    plot_heatmap(dfs, "abam")
+    plt.show()
 
 
 if __name__ == "__main__":
