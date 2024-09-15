@@ -768,6 +768,48 @@ def plot_figures(
     plot_posterior_corner(model, chains, burn_in=burn_in)
 
 
+def plot_transformed_data(
+    model: Model,
+) -> plt.Figure:
+    """Plot the raw data and blobs.
+
+    Parameters
+    ----------
+    model : Model
+        Model for which the data is to be plotted
+    burn_in : int
+        Samples to ignore at the beginning of the chains
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing the plotted data
+    """
+    t_trans = model.get_transformed_data("t")
+    c_trans = model.get_transformed_data("c")
+    time = np.arange(len(t_trans))
+
+    fig, axes = plt.subplots(2, 1)
+    axes[0].plot(
+        time,
+        t_trans,
+        label="transformed temperature",
+        linestyle="-",
+        marker=".",
+        color="k",
+    )
+
+    axes[1].plot(
+        time,
+        c_trans,
+        label="transformed cones",
+        linestyle="-",
+        marker=".",
+        color="k",
+    )
+    return fig
+
+
 def plot_data(
     model: Model,
     burn_in: int = 1000,
@@ -845,20 +887,21 @@ def plot_data(
 
 
 if __name__ == "__main__":
-    model = ThreeYearsPreceedingModel(
-        get_data(impute_time=True, site=1),
-        preprocess={"t": ToKelvin},
-        transforms={},
-    )
-    # model = RAModel(
+    # model = ThreeYearsPreceedingModel(
     #     get_data(impute_time=True, site=1),
-    #     preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
+    #     preprocess={"t": ToKelvin},
     #     transforms={},
     # )
-    # sampler = run_sampler(model, nwalkers=64, nsamples=10000, save=True)
+    model = RAModel(
+        get_data(impute_time=True, site=1),
+        preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
+        transforms={},
+    )
+    sampler = run_sampler(model, nwalkers=64, nsamples=10000, save=True)
     chains = get_backend(model).get_chain()
 
     # plot_data(model, sampler=sampler)
+    # plot_transformed_data(model)
     # plot_chains(model, chains)
 
     sample_posterior_predictive(model, n_predictions=10000, burn_in=6000)
@@ -867,10 +910,10 @@ if __name__ == "__main__":
     # plot_posterior_corner(model, chains, burn_in=6000)
     # plot_prior_corner(model)
 
-    plot_posterior_predictive_one_plot(model)
+    # plot_posterior_predictive_one_plot(model)
     # plot_prior_predictive_one_plot(model, chains)
 
-    plot_posterior_predictive_density(model)
+    # plot_posterior_predictive_density(model)
     # plot_prior_predictive_density(model)
 
-    plt.show()
+    # plt.show()

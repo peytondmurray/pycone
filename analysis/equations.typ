@@ -48,7 +48,7 @@ al.
 
 + *Linearity*: There's no reason _a priori_ to think that the relationship between any
   of the predictors put forth by Kelly et al should be linear with $log(c)$, except that
-  any continuous and differential function can be approximated to first order as a line
+  any continuous and differentiable function can be approximated to first order as a line
   (Taylor series). No discussion of this choice is made, even though it may be valid,
   although the implications of this assumption mean that the calculations become easier.
 

@@ -211,8 +211,7 @@ class RAModel(Model):
         float
             Log prior probability
         """
-        # prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
-        prior = gsl.halfnorm_pdf([theta[0]], 10) * gsl.halfnorm_pdf([theta[1]], 10)
+        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
 
         if np.isnan(prior):
             return -np.inf
@@ -262,6 +261,9 @@ class RAModel(Model):
         c = self.get_transformed_data("c")
         c_mu, t_contribution, c_contribution = self.compute_c_mu(theta)
 
+        if np.any(c_mu < 0):
+            return -np.inf
+
         # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
         ll = c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
         # ll[ll <= 0] = -np.inf
@@ -275,6 +277,9 @@ class RAModel(Model):
     def log_likelihood(self, theta: tuple[float, ...]) -> float:
         c = self.get_transformed_data("c")
         c_mu, t_contrib, c_contrib = self.compute_c_mu(theta)
+
+        if np.any(c_mu < 0):
+            return -np.inf
 
         ll = c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
 
