@@ -3,6 +3,7 @@ import pathlib
 import sys
 import warnings
 from multiprocessing import Pool
+from typing import cast
 
 import arviz as az
 import emcee
@@ -13,6 +14,7 @@ import pandas as pd
 import rich.progress as rp
 import tarmac
 from matplotlib.collections import LineCollection
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from rich.console import Console
 
 from ..preprocess import load_data
@@ -20,6 +22,7 @@ from ..util import add_days_since_start, read_data
 from .model import (  # noqa: F401
     ITKModel,
     Model,
+    RAModel,
     SumModel,
     ThreeYearsPreceedingModel,
     TYPKelvinModel,
@@ -135,6 +138,13 @@ def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray, np.n
         Log posterior and pointwise log likelihood
     """
     lp = model.log_prior(theta)
+
+    if hasattr(model, "log_likelihood"):
+        if not np.isfinite(lp):
+            return -np.inf
+
+        return lp + model.log_likelihood(theta)
+
     if not np.isfinite(lp):
         return -np.inf, np.full((len(model.raw_data),), -np.inf), np.full(
             (len(model.raw_data),), -np.inf
@@ -142,7 +152,6 @@ def log_probability(theta: tuple, model: Model) -> tuple[float, np.ndarray, np.n
 
     log_likelihood_vect, t_contrib, c_contrib = model.log_likelihood_vector(theta)
     log_likelihood = np.nansum(log_likelihood_vect)
-
     return lp + log_likelihood, t_contrib, c_contrib
 
 
@@ -181,22 +190,22 @@ def run_sampler(
         backend = None
 
     np.random.default_rng(42)
-    sampler = emcee.EnsembleSampler(
-        nwalkers,
-        model.ndim,
-        log_prob_fn=functools.partial(log_probability, model=model),
-        backend=backend,
-    )
-    sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
-    # with Pool(processes=10) as pool:
-    #     sampler = emcee.EnsembleSampler(
-    #         nwalkers,
-    #         model.ndim,
-    #         log_prob_fn=functools.partial(log_probability, model=model),
-    #         pool=pool,
-    #         backend=backend,
-    #     )
-    #     sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    # sampler = emcee.EnsembleSampler(
+    #     nwalkers,
+    #     model.ndim,
+    #     log_prob_fn=functools.partial(log_probability, model=model),
+    #     backend=backend,
+    # )
+    # sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
+    with Pool(processes=12) as pool:
+        sampler = emcee.EnsembleSampler(
+            nwalkers,
+            model.ndim,
+            log_prob_fn=functools.partial(log_probability, model=model),
+            pool=pool,
+            backend=backend,
+        )
+        sampler.run_mcmc(model.initialize(nwalkers), nsamples, progress=True)
 
     return sampler
 
@@ -386,7 +395,7 @@ def plot_posterior_corner(
     model: Model,
     chains: str | np.ndarray | None = None,
     fig: plt.Figure | None = None,
-    burn_in: int = 6000,
+    burn_in: int = 0,
 ) -> plt.Figure:
     """Generate a corner plot of posterior samples.
 
@@ -510,13 +519,15 @@ def plot_posterior_predictive_one_plot(
     lines = LineCollection(
         [np.vstack((day, samples[i, :])).T for i in range(min(max_traces, samples.shape[0]))],
         colors="k",
-        alpha=0.3,
+        alpha=0.1,
     )
 
     ax.add_collection(lines)
 
     ax.plot(model.raw_data["c"], "-r", label="data")
     ax.set_title("Posterior predictive distribution of cone count")
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Number of cones")
     ax.legend()
     return fig
 
@@ -568,7 +579,7 @@ def plot_posterior_predictive_density(
         values, _ = np.histogram(samples[:, i], bins=bins, range=c_range, density=True)
         pdf[:, i] = values
 
-    ax.imshow(
+    im = ax.imshow(
         pdf,
         extent=[0, nsteps, 0, bins],
         cmap="viridis",
@@ -577,7 +588,14 @@ def plot_posterior_predictive_density(
         aspect="auto",
     )
 
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="2.5%", pad=0.05)
+
+    plt.colorbar(im, cax=cax, label="Probability")
+
     ax.set_title("Posterior predictive distribution of cone count")
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Number of cones")
     ax.plot(model.raw_data["c"], "-r", label="observed")
     ax.legend()
     return fig
@@ -711,9 +729,25 @@ def plot_prior_corner(
     return fig
 
 
+def get_backend(
+    model: Model,
+    backend: str | None = None,
+) -> emcee.backends.Backend:
+    if backend is None:
+        backend = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0")
+    elif isinstance(backend, str):
+        backend = emcee.backends.HDFBackend(backend)
+    elif isinstance(backend, np.ndarray):
+        pass
+    else:
+        raise ValueError("No backend found.")
+
+    return backend
+
+
 def plot_figures(
     model: Model,
-    chains: str | np.ndarray | None = None,
+    chains: np.ndarray | None = None,
     burn_in: int = 16000,
 ):
     """Plot the walker trace and corner plot.
@@ -722,26 +756,86 @@ def plot_figures(
     ----------
     model : Model
         Model to display
-    chains : str | np.ndarray | None
+    chains : np.ndarray | None
         Posterior sample chains
     burn_in : int
         Number of samples to ignore from the front of the dataset
     """
-    if chains is None:
-        chains = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0").get_chain()
-    elif isinstance(chains, str):
-        chains = emcee.backends.HDFBackend(chains).get_chain()
+    if chains is not None:
+        chains = get_backend(model, chains).get_chain()
 
     plot_chains(model, chains)
     plot_posterior_corner(model, chains, burn_in=burn_in)
 
 
-def plot_data(model, burn_in: int = 1000, sampler=None):
-    if sampler is None:
-        sampler = emcee.backends.HDFBackend(f"{model.name}_sampler.h5", name="mcmc_0")
-    elif isinstance(sampler, str):
-        sampler = emcee.backends.HDFBackend(sampler)
+def plot_transformed_data(
+    model: Model,
+) -> plt.Figure:
+    """Plot the raw data and blobs.
 
+    Parameters
+    ----------
+    model : Model
+        Model for which the data is to be plotted
+    burn_in : int
+        Samples to ignore at the beginning of the chains
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing the plotted data
+    """
+    t_trans = model.get_transformed_data("t")
+    c_trans = model.get_transformed_data("c")
+    time = np.arange(len(t_trans))
+
+    fig, axes = plt.subplots(2, 1)
+    axes[0].plot(
+        time,
+        t_trans,
+        label="transformed temperature",
+        linestyle="-",
+        marker=".",
+        color="k",
+    )
+
+    axes[1].plot(
+        time,
+        c_trans,
+        label="transformed cones",
+        linestyle="-",
+        marker=".",
+        color="k",
+    )
+    return fig
+
+
+def plot_data(
+    model: Model,
+    burn_in: int = 1000,
+    sampler: str | emcee.backends.HDFBackend | None = None,
+) -> plt.Figure:
+    """Plot the raw data and blobs.
+
+    Parameters
+    ----------
+    model : Model
+        Model for which the data is to be plotted
+    burn_in : int
+        Samples to ignore at the beginning of the chains
+    sampler : str | emcee.backends.HDFBackend | None
+        Sampler hdf5 file to use or to load. If unspecified,
+        {model.name}_sampler.h5 will be loaded
+
+    Returns
+    -------
+    plt.Figure
+        Figure containing the plotted data
+    """
+    if isinstance(sampler, str) or sampler is None:
+        sampler = get_backend(model, sampler)
+
+    sampler = cast(emcee.backends.HDFBackend, sampler)
     blobs = sampler.get_blobs()
 
     bins = 40
@@ -789,38 +883,31 @@ def plot_data(model, burn_in: int = 1000, sampler=None):
 
     ax[0].set_title("Contributions of t term to c_mu")
     ax[1].set_title("Contributions of c term to c_mu")
-
-    # ax.plot(model.raw_data["c"], "-r", label="observed")
-
-    # ax[0].plot(model.raw_data['t'], '.k', label='raw temperature')
-    # ax[0].plot(model.transformed_data["t"], ".r", label="transformed data")
-    # ax[0].plot(backward_integral(model.transformed_data["t"], 100), ".b", label="backward_integral")
-
-    # ax[0].plot(model.raw_data["c"], ".k", label="raw temperature")
-    # ax[0].plot(model.transformed_data["c"], ".r", label="transformed data")
-
-    # fig.legend()
-
     return fig
 
 
 if __name__ == "__main__":
-    model = SumModel(
+    # model = ThreeYearsPreceedingModel(
+    #     get_data(impute_time=True, site=1),
+    #     preprocess={"t": ToKelvin},
+    #     transforms={},
+    # )
+    model = RAModel(
         get_data(impute_time=True, site=1),
         preprocess={"t": KelvinCumsumTransform, "c": OneDayPerYearCumsumTransform},
         transforms={},
     )
-    sampler = run_sampler(model, nwalkers=64, nsamples=10000, save=False)
+    sampler = run_sampler(model, nwalkers=64, nsamples=10000, save=True)
+    chains = get_backend(model).get_chain()
 
-    chains = sampler.get_chain()
+    # plot_data(model, sampler=sampler)
+    # plot_transformed_data(model)
+    # plot_chains(model, chains)
 
-    plot_data(model, sampler=sampler)
-    plot_chains(model, chains)
-
-    # sample_posterior_predictive(model, n_predictions=10000, burn_in=1000)
+    sample_posterior_predictive(model, n_predictions=10000, burn_in=6000)
     # sample_prior_predictive(model, n_predictions=10000)
 
-    plot_posterior_corner(model, chains)
+    # plot_posterior_corner(model, chains, burn_in=6000)
     # plot_prior_corner(model)
 
     # plot_posterior_predictive_one_plot(model)
@@ -829,4 +916,4 @@ if __name__ == "__main__":
     # plot_posterior_predictive_density(model)
     # plot_prior_predictive_density(model)
 
-    plt.show()
+    # plt.show()

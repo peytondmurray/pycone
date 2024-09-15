@@ -1,4 +1,3 @@
-# import scipy.stats as st
 import numpy as np
 import pandas as pd
 
@@ -6,6 +5,7 @@ import pandas as pd
 import scipy.special as ss
 import scipy.stats as st
 
+from .. import gsl
 from .math import backward_integral, lagged, mavg
 from .transform import IdentityTransform
 
@@ -46,6 +46,29 @@ class Model:
             self.transforms[col] = transforms.get(col, IdentityTransform)()
             transformed_data[col] = self.transforms[col].transform(self.preprocessed_data[col])
         self.transformed_data = pd.DataFrame(transformed_data)
+
+        self._transformed_data: dict[str, np.ndarray] = {}
+
+    def get_transformed_data(self, col: str) -> np.ndarray:
+        """Get the transformed data for a column.
+
+        If cached, that data is returned; otherwise, cache it first before returning it.
+
+        Parameters
+        ----------
+        col : str
+            Column to get
+
+        Returns
+        -------
+        np.ndarray
+            Column data as an array
+        """
+        if col in self._transformed_data:
+            return self._transformed_data[col]
+
+        self._transformed_data[col] = self.transformed_data[col].to_numpy()
+        return self._transformed_data[col]
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
         """Generate initial positions for the MCMC walkers.
@@ -123,6 +146,176 @@ class Model:
         raise NotImplementedError
 
 
+class RAModel(Model):
+    """Model which sums the temperature (in Kelvin) cumulatively.
+
+    c_mu = c0 + alpha*cumsum(T) - cumsum(c)
+    """
+
+    name = "ramodel"
+    labels = [
+        "c0",
+        "alpha",
+    ]
+    blobs_dtype = [("t_contribution", float), ("cone_contribution", float)]
+
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        preprocess: dict[str, type] | None = None,
+        transforms: dict[str, type] | None = None,
+    ):
+        """Init an RAModel."""
+        super().__init__(data, preprocess, transforms)
+
+        self.priors = [
+            st.uniform(loc=0, scale=100),  # c0
+            st.halfnorm(loc=0, scale=100),  # alpha
+        ]
+
+        self.labels = self.labels
+        self.ndim = len(self.priors)
+
+    def initialize(self, nwalkers: int = 32) -> np.ndarray:
+        """Generate initial positions for the MCMC walkers.
+
+        Init in a gaussian ball around the max of the likelihood.
+
+        Parameters
+        ----------
+        nwalkers : int
+            Number of walkers to generate positions for
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (nwalkers, self.ndim)
+        """
+        return np.vstack(
+            (
+                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # c0
+                st.norm.rvs(loc=10, scale=1, size=nwalkers),  # alpha
+            )
+        ).T
+
+    def log_prior(self, theta: tuple[float, ...]) -> float:
+        """Compute the log prior probability.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        float
+            Log prior probability
+        """
+        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+
+        if np.isnan(prior):
+            return -np.inf
+
+        return np.log(prior)
+
+    def compute_c_mu(self, theta: tuple[float, ...] | np.ndarray) -> tuple[np.ndarray, ...]:
+        """Compute the expected number of cones from the given parameters.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Tuple of model parameters
+
+        Returns
+        -------
+        tuple[np.ndarray, ...]
+            Expected number of cones for the entire length of time spanned
+            by the dataset; should be of length self.raw_data.shape[0]
+        """
+        c0, alpha = theta
+
+        c_trans = self.get_transformed_data("c")
+        t_trans = self.get_transformed_data("t")
+
+        t_contribution = alpha * t_trans
+        cone_contribution = c_trans
+        c_mu = c0 + t_contribution - cone_contribution
+        return c_mu, t_contribution, cone_contribution
+
+    def log_likelihood_vector(self, theta: tuple[float, ...]) -> tuple[np.ndarray, ...]:
+        """Compute the log likelihood vector.
+
+        The nansum of this vector returns the log likelihood. Data must be contiguous.
+        Each date has a different c_mu, so this vector is of shape == c.shape.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Parameters of the model
+
+        Returns
+        -------
+        np.ndarray
+            Array containing log-likelihood for every data point for the given theta
+        """
+        c = self.get_transformed_data("c")
+        c_mu, t_contribution, c_contribution = self.compute_c_mu(theta)
+
+        if np.any(c_mu < 0):
+            return -np.inf
+
+        # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
+        ll = c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+        # ll[ll <= 0] = -np.inf
+
+        return (
+            ll,
+            t_contribution,
+            c_contribution,
+        )
+
+    def log_likelihood(self, theta: tuple[float, ...]) -> float:
+        c = self.get_transformed_data("c")
+        c_mu, t_contrib, c_contrib = self.compute_c_mu(theta)
+
+        if np.any(c_mu < 0):
+            return -np.inf
+
+        ll = c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+
+        # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
+        # ll[ll <= 0] = -np.inf
+
+        return np.nansum(ll)
+
+    def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
+        """Generate a set of independent prior or posterior predictive samples.
+
+        Parameters
+        ----------
+        theta : tuple[float, ...]
+            Model parameter vector
+
+        Returns
+        -------
+        np.ndarray
+            Time series (same shape as `self.raw_data['f']`) of independent cone predictions.
+            Note that this returns _transformed_ predictions, not the predictions in the original
+            units.
+        """
+        c_mu, *_ = self.compute_c_mu(theta)
+
+        # Mask off the bad data points. These arise because in the
+        # log_probability function, we take `np.nansum` of the log
+        # probabilities to ignore points near to regions where there
+        # is no measured data.
+        mask = (c_mu < 0) | np.isnan(c_mu)
+        c_mu[mask] = 0
+        c_pred = st.poisson.rvs(c_mu).astype(float)
+        c_pred[mask] = np.nan
+        return c_pred
+
+
 class SumModel(Model):
     """Model which sums the temperature (in Kelvin) cumulatively.
 
@@ -192,7 +385,13 @@ class SumModel(Model):
         float
             Log prior probability
         """
-        prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+        # prior = np.prod([dist.pdf(param) for dist, param in zip(self.priors, theta, strict=True)])
+
+        prior = (
+            gsl.halfnorm_pdf([theta[0]], 10)
+            * gsl.halfnorm_pdf([theta[1]], 1)
+            * np.prod([gsl.halfnorm_pdf([param], 10) for param in theta])
+        )
 
         if np.isnan(prior):
             return -np.inf
@@ -215,10 +414,13 @@ class SumModel(Model):
         """
         (c0, alpha, *r) = theta
 
-        r_arr = np.repeat(np.cumsum(np.array(r)), self.nR * 365)[: len(self.transformed_data["c"])]
+        c_trans = self.get_transformed_data("c")
+        t_trans = self.get_transformed_data("t")
 
-        t_contribution = alpha * self.transformed_data["t"].to_numpy()
-        cone_contribution = self.transformed_data["c"].to_numpy()
+        r_arr = np.repeat(np.cumsum(np.array(r)), self.nR * 365)[: len(c_trans)]
+
+        t_contribution = alpha * t_trans
+        cone_contribution = c_trans
         c_mu = c0 + t_contribution - cone_contribution - r_arr
         return c_mu, t_contribution, cone_contribution
 
@@ -238,7 +440,7 @@ class SumModel(Model):
         np.ndarray
             Array containing log-likelihood for every data point for the given theta
         """
-        c = self.transformed_data["c"].to_numpy()
+        c = self.get_transformed_data("c")
         c_mu, t_contribution, c_contribution = self.compute_c_mu(theta)
 
         # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
@@ -615,34 +817,33 @@ class ThreeYearsPreceedingModel(Model):
     name = "three_years_preceeding"
     labels = [
         "c0",
-        "alpha",
-        "beta",
-        "gamma",
-        "width_alpha",
-        "width_beta",
-        "width_gamma",
-        "lag_alpha",
-        "lag_beta",
-        "lag_gamma",
-        "lag_last_cone",
+        "alpha_0",
+        "alpha_1",
+        "alpha_2",
+        "width_alpha_0",
+        "width_alpha_1",
+        "width_alpha_2",
+        "lag_alpha_0",
+        "lag_alpha_1",
+        "lag_alpha_2",
+        "lag_3",
     ]
 
     def __init__(self, *args, **kwargs):
         """Instantiate a ThreeYearsPreceedingModel."""
         super().__init__(*args, **kwargs)
         self.priors = [
-            # st.uniform(loc=0, scale=1000), # c0
-            st.halfnorm(loc=0, scale=10),  # c0 - priors are way more controlled with this one
-            st.norm(loc=0, scale=10),  # alpha
-            st.norm(loc=0, scale=10),  # beta
-            st.norm(loc=0, scale=10),  # gamma
+            st.halfnorm(loc=0, scale=100),  # c0 - priors are way more controlled with this one
+            st.halfnorm(loc=0, scale=20),  # alpha
+            st.halfnorm(loc=0, scale=20),  # beta
+            st.halfnorm(loc=0, scale=20),  # gamma
             st.uniform(loc=1, scale=100),  # width_alpha
             st.uniform(loc=1, scale=100),  # width_beta
             st.uniform(loc=1, scale=100),  # width_gamma
             st.uniform(loc=185, scale=365),  # lag_alpha
             st.uniform(loc=550, scale=365),  # lag_beta
             st.uniform(loc=915, scale=365),  # lag_gamma
-            st.uniform(loc=915, scale=1095),  # lag_last_cone
+            st.uniform(loc=915, scale=365),  # lag_last_cone
         ]
 
     def initialize(self, nwalkers: int = 32) -> np.ndarray:
@@ -661,12 +862,12 @@ class ThreeYearsPreceedingModel(Model):
         return np.vstack(
             (
                 st.norm.rvs(loc=30, scale=10, size=nwalkers),  # c0
-                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # alpha
-                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # beta
-                st.norm.rvs(loc=0, scale=5, size=nwalkers),  # gamma
-                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_alpha
-                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_beta
-                st.norm.rvs(loc=30, scale=15, size=nwalkers),  # width_gamma
+                st.norm.rvs(loc=5, scale=1, size=nwalkers),  # alpha
+                st.norm.rvs(loc=5, scale=1, size=nwalkers),  # beta
+                st.norm.rvs(loc=5, scale=1, size=nwalkers),  # gamma
+                st.norm.rvs(loc=30, scale=10, size=nwalkers),  # width_alpha
+                st.norm.rvs(loc=30, scale=10, size=nwalkers),  # width_beta
+                st.norm.rvs(loc=30, scale=10, size=nwalkers),  # width_gamma
                 st.norm.rvs(loc=365, scale=15, size=nwalkers),  # lag_alpha
                 st.norm.rvs(loc=730, scale=15, size=nwalkers),  # lag_beta
                 st.norm.rvs(loc=1095, scale=15, size=nwalkers),  # lag_gamma
@@ -693,7 +894,7 @@ class ThreeYearsPreceedingModel(Model):
             return -np.inf
         return np.log(prior)
 
-    def compute_c_mu(self, theta: tuple[float, ...]) -> np.ndarray:
+    def compute_c_mu(self, theta: tuple[float, ...]) -> tuple[np.ndarray, ...]:
         """Compute the expected number of cones from the given parameters.
 
         Parameters
@@ -721,16 +922,17 @@ class ThreeYearsPreceedingModel(Model):
             lag_last_cone,
         ) = theta
 
-        f = self.transformed_data["t"].to_numpy()
-        c = self.transformed_data["c"].to_numpy()
+        f = self.get_transformed_data("t")
+        c = self.get_transformed_data("c")
 
-        return (
-            c0
-            + alpha * mavg(f, width_alpha, lag_alpha)
+        t_contrib = (
+            alpha * mavg(f, width_alpha, lag_alpha)
             + beta * mavg(f, width_beta, lag_beta)
             + gamma * mavg(f, width_gamma, lag_gamma)
-            - lagged(c, lag_last_cone)
         )
+        c_contrib = lagged(c, lag_last_cone)
+
+        return (c0 + t_contrib - c_contrib), t_contrib, c_contrib
 
     def log_likelihood_vector(self, theta: tuple[float, ...]) -> np.ndarray:
         """Compute the log likelihood vector.
@@ -747,12 +949,26 @@ class ThreeYearsPreceedingModel(Model):
         np.ndarray
             Array containing log-likelihood for every data point for the given theta
         """
-        c = self.transformed_data["c"].to_numpy()
+        c = self.get_transformed_data("c")
+        c_mu, t_contrib, c_contrib = self.compute_c_mu(theta)
 
-        c_mu = self.compute_c_mu(theta)
+        # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
+        ll = c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+        # ll[ll <= 0] = -np.inf
 
         # Each date has a different c_mu, so this vector is of shape == c.shape
-        return c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+        return ll, t_contrib, c_contrib
+
+    def log_likelihood(self, theta: tuple[float, ...]) -> float:
+        c = self.get_transformed_data("c")
+        c_mu, t_contrib, c_contrib = self.compute_c_mu(theta)
+
+        # Anywhere c_mu <= 0 we reject the sample by setting the probability to -np.inf
+        ll = c * np.log(c_mu) - c_mu - np.log(ss.factorial(c))
+        # ll[ll <= 0] = -np.inf
+
+        # Each date has a different c_mu, so this vector is of shape == c.shape
+        return np.nansum(ll)
 
     def predictive(self, theta: tuple[float, ...] | np.ndarray) -> np.ndarray:
         """Generate a set of independent prior or posterior predictive samples.
@@ -769,7 +985,7 @@ class ThreeYearsPreceedingModel(Model):
             Note that this returns _transformed_ predictions, not the predictions in the original
             units.
         """
-        c_mu = self.compute_c_mu(theta)
+        c_mu, _, _ = self.compute_c_mu(theta)
 
         # Mask off the bad data points. These arise because in the
         # log_probability function, we take `np.nansum` of the log

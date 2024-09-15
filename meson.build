@@ -8,16 +8,14 @@ py_mod = import('python')
 py = py_mod.find_installation()
 
 pybind11_dep = dependency('pybind11', version: '>=2.10.4')
+gsl_dep = dependency('gsl', version: '>=2.8')
+boost_dep = dependency('boost', version: '>=1.83')
 
 includes = include_directories(
   [
     'pycone/src',
   ]
 )
-
-srcs = [
-  'pycone/src/pycone.cpp',
-]
 
 py.install_sources(
   [
@@ -59,9 +57,18 @@ install_data(
 
 py.extension_module(
   '_pycone_main',
-  srcs,
+  ['pycone/src/pycone.cpp'],
   install: true,
   subdir: 'pycone',
   include_directories: includes,
   dependencies: [pybind11_dep]
+)
+
+py.extension_module(
+  'gsl',
+  ['pycone/src/gsl.cpp'],
+  install: true,
+  subdir: 'pycone',
+  include_directories: includes,
+  dependencies: [pybind11_dep, gsl_dep]
 )
