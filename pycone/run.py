@@ -153,6 +153,10 @@ def run_analysis(
         Number to be added to all cones. This prevents the infinities that arise when exp(ΔT/n) is
         calculated when n = 0.
     """
+    correlation_fname = f"correlation_{method}_{kind.value}.csv"
+    if pathlib.Path(correlation_fname).exists():
+        return
+
     cones = load_cones()
     weather = load_weather()
     mean_t = compute_mean_t(weather)
@@ -176,7 +180,7 @@ def run_analysis(
         mean_t=mean_t,
         cones=cones,
         groups=groups,
-        output=f"correlation_{method}_{kind.value}.csv",
+        output=correlation_fname,
     )
 
     output.plot_correlation_duration_grids(
@@ -247,7 +251,7 @@ def show_fft():
     cones = load_cones()
     weather = load_weather()
 
-    output.plot_fequency(weather, cones)
+    output.plot_frequency(weather, cones)
 
 
 def run_all_correlation_kinds():
@@ -259,7 +263,7 @@ def run_all_correlation_kinds():
     ]:
         for method in ["pearson", "spearman"]:
             run_analysis(kind=kind, method=method)
-            run_batch_analysis(kind=kind, method=method)
+            # run_batch_analysis(kind=kind, method=method)
 
 
 def run_exp_dt_over_n_correlation_with_offset():
