@@ -417,7 +417,7 @@ def plot_site_colormap(
     return im
 
 
-def plot_fequency(
+def plot_frequency(
     mean_t: pd.DataFrame,
     cones: pd.DataFrame,
     site: int = 9,
