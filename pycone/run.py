@@ -207,6 +207,10 @@ def run_batch_analysis(
     method : str
         Method kwarg to pass pandas.DataFrame.corr
     """
+    correlation_fname = f"correlation_{method}_grouped_{kind.value}.csv"
+    if pathlib.Path(correlation_fname).exists():
+        return
+
     cones = load_cones()
     weather = load_weather()
     mean_t = compute_mean_t(weather)
@@ -232,7 +236,7 @@ def run_batch_analysis(
         mean_t=mean_t,
         cones=cones,
         groups=list(groups.values()),
-        output=f"correlation_{method}_grouped_{kind.value}.csv",
+        output=correlation_fname,
     )
 
     output.plot_correlation_duration_grids(
@@ -262,8 +266,8 @@ def run_all_correlation_kinds():
         util.CorrelationType.EXP_DT_OVER_N,
     ]:
         for method in ["pearson", "spearman"]:
-            run_analysis(kind=kind, method=method)
-            # run_batch_analysis(kind=kind, method=method)
+            # run_analysis(kind=kind, method=method)
+            run_batch_analysis(kind=kind, method=method)
 
 
 def run_exp_dt_over_n_correlation_with_offset():

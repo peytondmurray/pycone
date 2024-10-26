@@ -104,7 +104,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         """Populate the QComboBox widgets with values from the data."""
         self.w_group.addItems(self.correlation_groups.keys())
         self.w_method.addItems(["pearson", "spearman"])
-        self.w_kind.addItems(["exp_dt_over_n_vs_n"])
+        self.w_kind.addItems(["dt_vs_n", "exp_dt_vs_n", "exp_dt_over_n_vs_n"])
 
     def duration_changed(self, index: int):
         """Slot called when the duration is changed.
@@ -215,7 +215,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 [60, 91, 121, 152, 182, 213, 244, 274],
                 labels=["Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"],
             )
-            ax.set_title(r"$\rho_{exp(\Delta T/(N+0.5)), (N+0.5)}$")
+            ax.set_title(self.w_kind.currentText())
             ax.set_xlabel("T2")
             ax.set_ylabel("T1")
 
@@ -329,19 +329,11 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.cones = util.read_data("cones.csv")
 
         weather = util.read_data("weather.csv")
-        weather["days_since_start"] = util.get_days_since_start(
-            weather,
-            year_col="year",
-            doy_col="day_of_year",
-        )
+        weather = util.add_days_since_start(weather, doy_col="day_of_year")
         self.weather = weather.sort_values(by=["site", "days_since_start"])
 
         mean_t = util.read_data("mean_t.csv")
-        mean_t["days_since_start"] = util.get_days_since_start(
-            mean_t,
-            year_col="year",
-            doy_col="start",
-        )
+        mean_t = util.add_days_since_start(mean_t, doy_col="start")
         self.mean_t = mean_t.sort_values(by=["site", "duration", "days_since_start"])
 
     def get_correlation_data(self, method: str = ""):
@@ -354,7 +346,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         """
         kind = self.w_kind.currentText()
         if not kind:
-            kind = "exp_dt_over_n_vs_n"
+            kind = "dt_vs_n"
             self.w_kind.setCurrentText(kind)
 
         if not method:
