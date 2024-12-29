@@ -4,7 +4,9 @@ import sys
 import pandas as pd
 
 
-def get_max_correlation_dt_vs_n(path: str, min_duration: int | None = None) -> pd.DataFrame:
+def get_max_correlation_dt_vs_n(
+    path: str, min_duration: int | None = None, grouped: bool = False
+) -> pd.DataFrame:
     """Generate a max correlation table for the dt vs n model.
 
     Edges are excluded due to artifacts arising from how data is
@@ -28,7 +30,10 @@ def get_max_correlation_dt_vs_n(path: str, min_duration: int | None = None) -> p
     variable = "dt_vs_n"
     kind = "pearson"
 
-    fname = pathlib.Path(path) / f"correlation_{kind}_{variable}.csv"
+    if grouped:
+        fname = pathlib.Path(path) / f"correlation_{kind}_grouped_{variable}.csv"
+    else:
+        fname = pathlib.Path(path) / f"correlation_{kind}_{variable}.csv"
     data = pd.read_csv(fname)
 
     if min_duration is not None:
@@ -81,8 +86,10 @@ def get_max_correlation(path: str) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    result = get_max_correlation_dt_vs_n(sys.argv[1], int(sys.argv[2]))
-    result.to_csv(f"max_correlation_by_site_dt_vs_n_duration={sys.argv[2]}_noedge.csv")
+    result = get_max_correlation_dt_vs_n(sys.argv[1], int(sys.argv[2]), sys.argv[3] == "grouped")
+
+    suffix = "_grouped" if sys.argv[3] == "grouped" else ""
+    result.to_csv(f"max_correlation_by_site_dt_vs_n_duration={sys.argv[2]}_noedge{suffix}.csv")
 
     # result = get_max_correlation(sys.argv[1])
     # result.to_csv("max_correlation_by_site.csv")
