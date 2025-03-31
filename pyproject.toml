@@ -12,8 +12,6 @@ name = "pycone"
 dynamic = ["version"]
 authors = [
   { name="Peyton Murray", email="peynmurray@gmail.com" },
-  { name="Justin Hawkins", email="urbanecoguard@gmail.com" },
-  { name="Eli Kallison", email="elirushkallison@gmail.com" },
 ]
 description = "Statistical Analysis for Cone Production"
 readme = "README.md"

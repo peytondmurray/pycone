@@ -71,7 +71,7 @@ def get_data(
             day_of_year
             days_since_start
             t
-            cones
+            c
 
         This data contains _all_ dates between the beginning and end of the
         observed dataset. Many dates have no measured values, and thus have a
@@ -174,118 +174,57 @@ def lagged(c: np.ndarray, lag: int | float) -> np.ndarray:
     return result
 
 
-def run_simple_model():
-    """Run a simple model."""
-    # Likelihood is going to be poisson-distributed for each site; there's a waiting time
-    # distribution for each cone appearing in the stand. There are few enough cones produced for
-    # some species that summing them together (for the stand) will not produce a normal
-    # distribution.
-    data = get_data(impute_time=False)
+def year_cumsum(data: pd.DataFrame) -> np.ndarray:
+    """Take the yearly cumulative sum of the cone measurements.
 
-    with pm.Model() as model:
-        pm.Data("days_since_start_data", data["days_since_start"])
-        t_data = pm.Data("t_data", data["t"])
-        c_data = pm.Data("c_data", data["c"])
+    Cones are only measured once a year, but the values are copied to every measured day.
+    This function takes the cone count for each year, cumsums it, then copies the cone
+    cumsum to every day in the year. This column is then returned as the result.
 
-        # Uninformative uniform prior for the initial number c.
-        c0 = pm.DiscreteUniform("c0", lower=0, upper=1000)
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Observed data containing "year" and "c" (cone count) columns
 
-        alpha = pm.HalfNormal("alpha", sigma=10)
-        # beta = pm.HalfNormal("beta", sigma=10)
-        # gamma = pm.HalfNormal("gamma", sigma=10)
-        half_width_0 = pm.DiscreteUniform("width_0", 1, 100)
-        # half_width_1 = pm.DiscreteUniform("width_1", 1, 100)
-        lag_0 = pm.DiscreteUniform("lag_0", lower=180, upper=545)
-        # lag_1 = pm.DiscreteUniform("lag_1", lower=550, upper=910)
-        # lag_2 = pm.DiscreteUniform("lag_2", lower=915, upper=1275)
-
-        avg_t0 = pm.Deterministic("avg_t0", mavg(t_data, half_width_0, lag_0))
-        # avg_t0 = pm.Deterministic("avg_t0", moving_average(t_data, half_width_0, lag_0))
-        # avg_t1 = pm.Deterministic("avg_t1", moving_average(t_data, half_width_1, lag_1))
-        # lagged_c = pm.Deterministic("lagged_c", lagged(c_data, lag_2))
-
-        avg_t0_masked = pm.Deterministic(
-            "avg_t0_masked",
-            pm.math.switch(
-                pt.tensor.isnan(avg_t0),
-                pm.math.zeros_like(avg_t0),
-                avg_t0,
-            ),
-        )
-
-        c_mu = pm.Deterministic("c_mu", c0 + alpha * avg_t0_masked)
-
-        pm.Poisson("c_model", mu=c_mu, observed=c_data)
-
-        render_to_terminal(model)
-        idata = pm.sample(discard_tuned_samples=False)
-        # prior_samples = pm.sample_prior_predictive(1000)
-
-    console.print(df_to_rich(az.summary(idata)))
-    # render_to_terminal(model)
-
-    az.plot_trace(idata)
-    fig, ax = plt.subplots(1, 1, figsize=(8, 10))
-    az.plot_dist(
-        data["c"],
-        kind="hist",
-        color="C1",
-        hist_kwargs={"alpha": 0.6},
-        label="observed",
-        ax=ax,
-    )
-    # az.plot_dist(
-    #     prior_samples.prior_predictive["cones"],
-    #     kind="hist",
-    #     hist_kwargs={"alpha": 0.6},
-    #     label="simulated",
-    #     ax=ax,
-    # )
-
-    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-    az.plot_ts(
-        idata=idata,
-        y="c_model",
-        x="days_since_start_data",
-        axes=ax,
-    )
-
-    plt.show()
+    Returns
+    -------
+    np.ndarray
+        Cumulative cone crop count (summed by year), copied to each day of the year
+    """
+    first_c = data.groupby("year")["c"].first().cumsum()
+    first_c.name = "c_year_cumsum"
+    return data.merge(first_c, left_on="year", right_index=True)["c_year_cumsum"]
 
 
 def runmodel():
     """Run the pymc model."""
     data = get_data(impute_time=True)
 
+    data["c_year_cumsum"] = year_cumsum(data)
+
     with pm.Model() as model:
-        f_data = pm.MutableData("f_data", data["t"].to_numpy())
-        c_data = pm.MutableData("c_data", data["c"].to_numpy())
+        t_obs = pm.Data("t_data", data["t"].to_numpy())
+        c_obs = pm.Data("c_data", data["c"].to_numpy())
+        c_cumsum_data = pm.Data("c_year_cumsum_data", data["c_year_cumsum"].to_numpy())
 
         # Priors
         c0 = pm.Uniform("c0", lower=0, upper=1000)
         alpha = pm.HalfNormal("alpha", sigma=10)
-        beta = pm.HalfNormal("beta", sigma=10)
-        gamma = pm.HalfNormal("gamma", sigma=10)
-        width_alpha = pm.Uniform("width_alpha", lower=0.002, upper=0.27)
-        width_beta = pm.Uniform("width_beta", lower=0.002, upper=0.27)
-        width_gamma = pm.Uniform("width_gamma", lower=0.002, upper=0.27)
-        lag_alpha = pm.Uniform("lag_alpha", lower=0.5, upper=1.5)
-        lag_beta = pm.Uniform("lag_beta", lower=1.5, upper=2.5)
-        lag_gamma = pm.Uniform("lag_gamma", lower=2.5, upper=3.5)
-        lag_last_cone = pm.Uniform("lag_last_cone", lower=2.5, upper=3.5)
+        n = pm.DiscreteUniform("n_buds", lower=0, upper=1000)
+        k = pm.DiscreteUniform("n_cones", lower=0, upper=1000)
 
-        c_mu = pm.Deterministic(
-            "c_mu",
-            c0
-            + alpha * mavg(f_data, width_alpha, lag_alpha)
-            + beta * mavg(f_data, width_beta, lag_beta)
-            + gamma * mavg(f_data, width_gamma, lag_gamma)
-            - lagged(c_data, lag_last_cone),
-        )
+        # c_mu = c0 + alpha*cumsum(t) - year_cumsum(c)
+        c_max = pm.Deterministic("c_mu", c0 + alpha * t_obs.cumsum() - c_cumsum_data)
 
-        pm.Poisson("c_model", mu=c_mu, observed=c_data)
+        # p = pm.Deterministic("p", pm.math.invlogit(c_mu))
 
-        render_to_terminal(model)
+        # See https://www.pymc.io/projects/examples/en/latest/generalized_linear_models/GLM-binomial-regression.html
+        # pm.Binomial("c_model", n=n, p=p, observed=c_obs)
+        pm.HyperGeometric("c_model", N=c_max, n=n, k=k, observed=c_obs)
+
+        # model.debug(verbose=True)
+        # render_to_terminal(model)
+        print(model.initial_point())
         idata = pm.sample()
         # prior_samples = pm.sample_prior_predictive(1000)
 
@@ -301,6 +240,7 @@ def runmodel():
         label="observed",
         ax=ax,
     )
+
     # az.plot_dist(
     #     prior_samples.prior_predictive["cones"],
     #     kind="hist",
