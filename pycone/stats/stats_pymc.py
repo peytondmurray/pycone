@@ -12,8 +12,9 @@ from rich.console import Console
 
 from ..preprocess import load_data
 from ..util import add_days_since_start, df_to_rich, read_data
+from .math import fahrenheit_to_kelvin
 
-plt.style.use("dark_background")
+# plt.style.use("dark_background")
 console = Console()
 
 
@@ -196,66 +197,91 @@ def year_cumsum(data: pd.DataFrame) -> np.ndarray:
     return data.merge(first_c, left_on="year", right_index=True)["c_year_cumsum"]
 
 
+def data_to_year(data: pd.DataFrame) -> pd.DataFrame:
+    gb = data.groupby("year")
+    return pd.DataFrame(
+        {
+            "t_yearsum": gb["t"].sum(),
+            "c": gb["c"].first(),
+        }
+    )
+
+
 def runmodel():
     """Run the pymc model."""
     data = get_data(impute_time=True)
 
-    data["c_year_cumsum"] = year_cumsum(data)
+    data["t"] = fahrenheit_to_kelvin(data["t"])
+    data = data_to_year(data)
+
+    t_cumsum = data["t_yearsum"].to_numpy().cumsum()
+    t_cumsum = (t_cumsum / t_cumsum.max()) * 1e2
+    # breakpoint()
 
     with pm.Model() as model:
-        t_obs = pm.Data("t_data", data["t"].to_numpy())
+        t_obs = pm.Data("t_data", t_cumsum)
         c_obs = pm.Data("c_data", data["c"].to_numpy())
-        c_cumsum_data = pm.Data("c_year_cumsum_data", data["c_year_cumsum"].to_numpy())
+        c_cumsum_data = pm.Data("c_cumsum_data", data["c"].to_numpy().cumsum())
 
         # Priors
-        c0 = pm.Uniform("c0", lower=0, upper=1000)
+        c0 = pm.Uniform("c0", lower=0, upper=3000)
         alpha = pm.HalfNormal("alpha", sigma=10)
-        n = pm.DiscreteUniform("n_buds", lower=0, upper=1000)
-        k = pm.DiscreteUniform("n_cones", lower=0, upper=1000)
+        d = pm.HalfNormal("d", sigma=1)
 
-        # c_mu = c0 + alpha*cumsum(t) - year_cumsum(c)
-        c_max = pm.Deterministic("c_mu", c0 + alpha * t_obs.cumsum() - c_cumsum_data)
+        ## c_max = c0 + alpha*cumsum(t) - year_cumsum(c)
+        c_max = pm.Deterministic("c_max", c0 + alpha * t_obs - d * c_cumsum_data)
 
-        # p = pm.Deterministic("p", pm.math.invlogit(c_mu))
+        # c_max = pm.Deterministic("c_max", c0 + alpha * t_obs.cumsum() - c_cumsum_data)
+        c_max_safe = pm.Deterministic(
+            "c_max_safe", pt.tensor.maximum(0, pt.tensor.floor(c_max).astype("int64"))
+        )
 
-        # See https://www.pymc.io/projects/examples/en/latest/generalized_linear_models/GLM-binomial-regression.html
-        # pm.Binomial("c_model", n=n, p=p, observed=c_obs)
-        pm.HyperGeometric("c_model", N=c_max, n=n, k=k, observed=c_obs)
+        # b_alpha = pm.Gamma("b_alpha", alpha=2, beta=0.5)
+        # b_beta = pm.Gamma("b_beta", alpha=2, beta=0.5)
+        b_alpha = pm.HalfNormal("b_alpha", sigma=2)
+        b_beta = pm.HalfNormal("b_beta", sigma=2)
+        pm.BetaBinomial("c_model", alpha=b_alpha, beta=b_beta, n=c_max_safe, observed=c_obs)
 
         # model.debug(verbose=True)
         # render_to_terminal(model)
-        print(model.initial_point())
         idata = pm.sample()
-        # prior_samples = pm.sample_prior_predictive(1000)
+        # pm.sample_prior_predictive(1000, extend_inferencedata=True)
+        pm.sample_posterior_predictive(idata, extend_inferencedata=True)
 
-    console.print(df_to_rich(az.summary(idata)))
+    # console.print(df_to_rich(az.summary(idata, var_names=['c0', 'alpha', 'b_alpha', 'b_beta', 'd'])))
+    # console.print(df_to_rich(az.summary(idata, var_names=['c0', 'alpha', 'b_alpha', 'b_beta'])))
 
-    az.plot_trace(idata)
-    fig, ax = plt.subplots(1, 1, figsize=(8, 10))
-    az.plot_dist(
-        data["c"],
-        kind="hist",
-        color="C1",
-        hist_kwargs={"alpha": 0.6},
-        label="observed",
-        ax=ax,
-    )
+    az.summary(idata, var_names=["c0", "alpha", "b_alpha", "b_beta", "d"])
+    az.plot_posterior(idata, var_names=["c0", "alpha", "b_alpha", "b_beta", "d"])
+    az.plot_trace(idata, var_names=["c0", "alpha", "d"])
+    # az.plot_posterior(idata, var_names=['c0', 'alpha', 'b_alpha', 'b_beta'])
+    #
+    az.plot_ppc(idata, num_pp_samples=100)
+
+    # fig, ax = plt.subplots(1, 1, figsize=(8, 10))
+    # az.plot_dist(
+    #     data["c"],
+    #     kind="hist",
+    #     color="C1",
+    #     hist_kwargs={"alpha": 0.6},
+    #     label="observed",
+    # )
 
     # az.plot_dist(
-    #     prior_samples.prior_predictive["cones"],
+    #     idata_prior.prior_predictive["cones"],
     #     kind="hist",
     #     hist_kwargs={"alpha": 0.6},
     #     label="simulated",
     #     ax=ax,
     # )
 
-    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-    az.plot_ts(
-        idata=idata,
-        y="c_model",
-        x="days_since_start_data",
-        axes=ax,
-    )
+    # fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    # az.plot_ts(
+    #     idata=idata,
+    #     y="c_model",
+    #     x="days_since_start_data",
+    #     axes=ax,
+    # )
 
     plt.show()
 
